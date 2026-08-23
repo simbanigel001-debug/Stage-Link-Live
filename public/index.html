@@ -48,6 +48,9 @@
         <!-- Test Fader Button -->
         <button id="test-fader" class="px-3 py-1 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium rounded">Test Fader 1</button>
 
+        <!-- Talkback Intercom Button -->
+        <button id="talkback-btn" class="px-3 py-1 bg-red-600 hover:bg-red-500 text-white text-xs font-medium rounded shadow">🎤 Hold to Talk</button>
+
         <div id="connection" class="flex items-center space-x-2">
           <span id="conn-dot" class="status-dot bg-red-600"></span>
           <span id="conn-text" class="text-sm text-gray-300">Disconnected</span>
@@ -159,6 +162,46 @@
       alert('Preset loaded successfully!');
     });
 
+    // Talkback Audio Streaming Logic
+    let localStream = null;
+    let mediaRecorder = null;
+    const talkbackBtn = document.getElementById('talkback-btn');
+
+    talkbackBtn.addEventListener('mousedown', async () => {
+      try {
+        localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        mediaRecorder = new MediaRecorder(localStream);
+        
+        mediaRecorder.ondataavailable = (event) => {
+          if (event.data.size > 0) {
+            socket.emit('talkback-audio-chunk', event.data);
+          }
+        };
+
+        mediaRecorder.start(250);
+        talkbackBtn.classList.remove('bg-red-600', 'hover:bg-red-500');
+        talkbackBtn.classList.add('bg-green-600', 'hover:bg-green-500');
+        talkbackBtn.textContent = '🎤 Transmitting...';
+        console.log('[Talkback] Transmission started');
+      } catch (err) {
+        console.error('[Talkback] Error accessing microphone:', err);
+        alert('Could not access microphone for talkback.');
+      }
+    });
+
+    window.addEventListener('mouseup', () => {
+      if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+        mediaRecorder.stop();
+        if (localStream) {
+          localStream.getTracks().forEach(track => track.stop());
+        }
+        talkbackBtn.classList.remove('bg-green-600', 'hover:bg-green-500');
+        talkbackBtn.classList.add('bg-red-600', 'hover:bg-red-500');
+        talkbackBtn.textContent = '🎤 Hold to Talk';
+        console.log('[Talkback] Transmission stopped');
+      }
+    });
+
     // Utility to slugify names for placeholder links
     function slugify(text) {
       return text.toString().toLowerCase().replace(/\s+/g,'-').replace(/[^a-z0-9-_]/g,'');
@@ -182,7 +225,6 @@
 
     refreshBtn.addEventListener('click', () => fetchState(true));
 
-    // Fetch state from server
     async function fetchState(force=false) {
       try {
         const res = await fetch('/api/state', {cache: 'no-store'});
@@ -209,7 +251,6 @@
       }
     }
 
-    // Create musician via POST
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
       const name = document.getElementById('musician-name').value.trim();
@@ -296,7 +337,6 @@
       return `${base}/musician.html?id=${encodeURIComponent(id)}`;
     }
 
-    // Channels rendering & simulation
     const channelsContainer = document.getElementById('channels');
     function renderChannels() {
       channelsContainer.innerHTML = '';
@@ -330,7 +370,6 @@
       });
     }
 
-    // Init
     (function init(){
       renderChannels();
       fetchState();
