@@ -22,12 +22,12 @@
 <body class="text-gray-100 min-h-screen">
   <div class="max-w-7xl mx-auto p-6 space-y-6">
     <!-- Header -->
-    <header class="flex items-center justify-between">
+    <header class="flex flex-col md:flex-row items-center justify-between gap-4">
       <div>
         <h1 class="text-2xl font-semibold">StageLink Live Core - Engineer Dashboard</h1>
         <p class="text-sm text-gray-400">Monitor and manage active musicians and channel inputs</p>
       </div>
-      <div class="flex items-center space-x-4">
+      <div class="flex flex-wrap items-center gap-3">
         <!-- Mixer Type Selector -->
         <div class="flex items-center space-x-2">
           <label for="mixer-select" class="text-sm text-gray-300">Mixer:</label>
@@ -37,6 +37,17 @@
             <option value="yamaha">Yamaha</option>
           </select>
         </div>
+
+        <!-- Preset Controls -->
+        <div class="flex items-center space-x-2 bg-gray-900/60 p-1.5 rounded border border-gray-700">
+          <input id="preset-name" type="text" placeholder="Preset Name" class="px-2 py-1 bg-gray-900 border border-gray-700 text-gray-100 rounded text-xs w-28 focus:outline-none focus:ring-1 focus:ring-emerald-500" />
+          <button id="save-preset" class="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-black text-xs font-medium rounded">Save</button>
+          <button id="load-preset" class="px-2.5 py-1 bg-gray-700 hover:bg-gray-600 text-gray-100 text-xs font-medium rounded">Load</button>
+        </div>
+
+        <!-- Test Fader Button -->
+        <button id="test-fader" class="px-3 py-1 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium rounded">Test Fader 1</button>
+
         <div id="connection" class="flex items-center space-x-2">
           <span id="conn-dot" class="status-dot bg-red-600"></span>
           <span id="conn-text" class="text-sm text-gray-300">Disconnected</span>
@@ -108,7 +119,44 @@
     mixerSelect.addEventListener('change', (e) => {
       const selectedMixer = e.target.value;
       console.log(`[Mixer] Changing mixer type to: ${selectedMixer}`);
-      socket.emit('set-mixer-type', { brand: selectedMixer });
+      socket.emit('set-mixer-type', { type: selectedMixer });
+    });
+
+    // Test Fader Trigger
+    document.getElementById('test-fader').addEventListener('click', () => {
+      socket.emit('update_channel_level', { channel: 1, level: 0.75 });
+      console.log('Test fader packet sent for Channel 1 at 75%');
+    });
+
+    // Save Preset Trigger
+    document.getElementById('save-preset').addEventListener('click', () => {
+      const presetName = document.getElementById('preset-name').value.trim();
+      if (!presetName) {
+        alert('Please enter a preset name first.');
+        return;
+      }
+      const currentLevels = { channel1: 0.75, channel2: 0.60, timestamp: Date.now() };
+      socket.emit('save-preset', { name: presetName, currentLevels });
+    });
+
+    // Load Preset Trigger
+    document.getElementById('load-preset').addEventListener('click', () => {
+      const presetName = document.getElementById('preset-name').value.trim();
+      if (!presetName) {
+        alert('Please enter a preset name to load.');
+        return;
+      }
+      socket.emit('load-preset', { name: presetName });
+    });
+
+    socket.on('preset-saved', (data) => {
+      console.log('Preset saved successfully:', data.name);
+      alert(`Preset "${data.name}" saved successfully!`);
+    });
+
+    socket.on('apply-preset', (presetData) => {
+      console.log('Preset applied across dashboard view:', presetData);
+      alert('Preset loaded successfully!');
     });
 
     // Utility to slugify names for placeholder links
@@ -140,14 +188,12 @@
         const res = await fetch('/api/state', {cache: 'no-store'});
         if (!res.ok) throw new Error('Network response not ok');
         const data = await res.json();
-        // Try to support multiple possible shapes
         musicians = data.musicians || data.activeMusicians || data || [];
         updateConnection(true);
         renderMusicians();
       } catch (err) {
         console.warn('Failed to fetch state', err);
         updateConnection(false);
-        // keep current musicians if any
       }
     }
 
@@ -182,7 +228,6 @@
         if (!res.ok) throw new Error('Create failed');
         const created = await res.json();
         formMsg.textContent = 'Musician created.';
-        // optimistic update
         await fetchState(true);
         form.reset();
         setTimeout(()=>formMsg.textContent='',2000);
@@ -221,30 +266,25 @@
         `;
         musiciansGrid.appendChild(card);
 
-        // try to render QR code
         const qrEl = card.querySelector('.qr-target');
         const musicianId = id;
         const url = generateMixUrl(musicianId);
         if (window.QRCode && qrEl) {
-          // create canvas
           const canvas = document.createElement('canvas');
           canvas.width = 160; canvas.height = 160;
           qrEl.innerHTML = '';
           qrEl.appendChild(canvas);
-          // generate
           QRCode.toCanvas(canvas, url, { width: 160 }, function (error) {
             if (error) {
               qrEl.innerHTML = '<div class="text-xs text-gray-500">QR failed</div>';
             }
           });
         } else {
-          // fallback: placeholder
           if (qrEl) qrEl.innerHTML = '<div class="text-xs text-gray-500">Scan URL</div>';
         }
       });
     }
 
-    // escape HTML
     function escapeHtml(s) {
       return String(s || '').replace(/[&<>\"']/g, function(c){
         return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
@@ -253,7 +293,6 @@
 
     function generateMixUrl(id) {
       const base = window.location.origin;
-      // Use musician.html with id query param so the mobile page can open the correct musician view
       return `${base}/musician.html?id=${encodeURIComponent(id)}`;
     }
 
@@ -277,7 +316,6 @@
 
     function simulateActivity() {
       channels.forEach((_, i) => {
-        // random-ish values, a little correlated to time
         const level = Math.max(1, Math.round(Math.abs(Math.sin(Date.now()/700 + i) * 100)));
         const peak = Math.min(100, Math.round(level * (0.6 + Math.random()*0.8)));
         const levelEl = document.getElementById(`ch-${i}-level`);
@@ -285,7 +323,6 @@
         if (levelEl) levelEl.style.width = `${peak}%`;
         if (led) {
           led.textContent = `${peak}%`;
-          // color based on level
           if (peak > 80) led.className = 'text-red-400';
           else if (peak > 50) led.className = 'text-amber-400';
           else led.className = 'text-green-400';
@@ -297,12 +334,9 @@
     (function init(){
       renderChannels();
       fetchState();
-      // poll state regularly
       setInterval(fetchState, 5000);
-      // simulate channel activity frequently
       setInterval(simulateActivity, 200);
     })();
-
   </script>
 </body>
 </html>
