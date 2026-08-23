@@ -35,6 +35,12 @@
       </div>
     </header>
 
+    <!-- Talkback Status Alert -->
+    <div id="talkback-status" class="hidden bg-red-900/40 border border-red-600 text-red-200 px-3 py-2 rounded text-xs flex items-center space-x-2">
+      <span class="animate-pulse w-2 h-2 rounded-full bg-red-500"></span>
+      <span>Engineer is speaking (Talkback Active)</span>
+    </div>
+
     <!-- Mix Controls -->
     <main class="bg-gray-900/40 rounded-lg border border-gray-700 p-3">
       <div class="flex items-center justify-between mb-3">
@@ -68,11 +74,12 @@
     document.getElementById('musician-role').textContent = `(${musicianRole})`;
     document.getElementById('musician-id').textContent = musicianId;
 
-    // Channels (default 16) - could be overridden by query param channels=...
+    // Channels (default 16)
     const defaultChannels = ['Kick','Snare','Hi-Hat','Tom 1','Tom 2','Floor Tom','OH L','OH R','Bass','Guitar','Keys','Lead Vocal','Backing 1','Backing 2','FX','Aux'];
     const channelsParam = getParam('channels','');
     const channels = channelsParam ? channelsParam.split(',') : defaultChannels;
     const sliderContainer = document.getElementById('sliders');
+    const talkbackAlert = document.getElementById('talkback-status');
 
     // Current mix levels
     const mix = {};
@@ -102,7 +109,6 @@
           const v = Number(ev.target.value);
           valEl.textContent = v + '%';
           mix[i] = v;
-          // Emit immediately
           emitUpdate(i, v);
         });
       });
@@ -113,7 +119,7 @@
     }
 
     // Socket.io connection
-    const socket = io(); // connect to same origin
+    const socket = io();
     const socketDot = document.getElementById('socket-dot');
     const socketText = document.getElementById('socket-text');
 
@@ -131,28 +137,22 @@
 
     socket.on('connect', () => {
       setConnected(true);
-      // identify ourselves to server
       socket.emit('musician_join', { musicianId, name: musicianName, role: musicianRole });
+      requestCurrentMix();
     });
     socket.on('disconnect', () => setConnected(false));
     socket.on('connect_error', () => setConnected(false));
 
-    // Emit update_mix events
     function emitUpdate(channel, value) {
       const payload = { musicianId, channel, value };
       try {
         socket.emit('update_mix', payload);
-      } catch (e) {
-        // ignore if socket not ready
-      }
+      } catch (e) {}
     }
 
-    // Handle incoming mix updates from server
-    // Support shapes: { musicianId, channel, value } or { musicianId, mix: {channel:value,...} }
     socket.on('mix_updated', (data) => {
       try {
         if (!data) return;
-        // if targeting a specific musician and it doesn't match, ignore
         if (data.musicianId && data.musicianId !== musicianId) return;
 
         if (data.mix && typeof data.mix === 'object') {
@@ -166,10 +166,25 @@
           const val = Number(data.value);
           updateSliderUI(idx, val);
         } else if (Array.isArray(data)) {
-          // maybe server sends array of levels
           data.forEach((v,idx) => updateSliderUI(idx, Number(v)));
         }
       } catch (e) { console.error('mix_updated handler error', e); }
+    });
+
+    // Receive and play incoming talkback audio chunks from the engineer
+    socket.on('incoming-talkback', async (audioChunk) => {
+      talkbackAlert.classList.remove('hidden');
+      try {
+        const blob = new Blob([audioChunk], { type: 'audio/webm' });
+        const audioUrl = URL.createObjectURL(blob);
+        const audio = new Audio(audioUrl);
+        audio.play();
+        audio.onended = () => {
+          talkbackAlert.classList.add('hidden');
+        };
+      } catch (err) {
+        console.error('Error playing talkback audio:', err);
+      }
     });
 
     function updateSliderUI(channelIdx, value) {
@@ -181,17 +196,11 @@
       if (valEl) valEl.textContent = value + '%';
     }
 
-    // Provide a manual sync request
     function requestCurrentMix() {
       socket.emit('request_mix', { musicianId });
     }
 
-    // Init
     renderSliders();
-    // once connected, request server's mix state for this musician
-    socket.on('connect', () => requestCurrentMix());
-
-    // Keyboard accessibility: tap area increases
     document.addEventListener('touchstart', function() {}, {passive:true});
   </script>
 </body>
