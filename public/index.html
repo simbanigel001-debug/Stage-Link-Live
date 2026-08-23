@@ -188,7 +188,7 @@
             <div class="text-xs text-gray-400">ID: ${escapeHtml(String(id))}</div>
           </div>
           <div class="flex items-center space-x-3">
-            <div class="w-28 h-28 bg-gray-800/30 rounded flex items-center justify-center" id="qr-${id}">
+            <div class="qr-target w-28 h-28 bg-gray-800/30 rounded flex items-center justify-center" data-musician-id="${escapeHtml(String(id))}">
               <div class="text-xs text-gray-500">Generating QR...</div>
             </div>
             <div class="flex-1 text-xs text-gray-300">
@@ -200,8 +200,9 @@
         musiciansGrid.appendChild(card);
 
         // try to render QR code
-        const qrEl = card.querySelector('#qr-'+id);
-        const url = generateMixUrl(id);
+        const qrEl = card.querySelector('.qr-target');
+        const musicianId = id;
+        const url = generateMixUrl(musicianId);
         if (window.QRCode && qrEl) {
           // create canvas
           const canvas = document.createElement('canvas');
@@ -230,7 +231,8 @@
 
     function generateMixUrl(id) {
       const base = window.location.origin;
-      return `${base}/mix?musician=${encodeURIComponent(id)}`;
+      // Use musician.html with id query param so the mobile page can open the correct musician view
+      return `${base}/musician.html?id=${encodeURIComponent(id)}`;
     }
 
     // Channels rendering & simulation
