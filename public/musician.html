@@ -30,6 +30,14 @@
       </div>
     </header>
 
+    <!-- Audio Unlock Overlay / Button (Mandatory for mobile browsers) -->
+    <div id="audio-unlock-banner" class="mb-6 p-4 bg-emerald-600/20 border border-emerald-500 rounded-lg text-center shadow-lg">
+      <p class="text-xs text-emerald-300 mb-2 font-medium">Mobile browser security requires interaction to enable live audio monitoring.</p>
+      <button id="unlock-audio-btn" class="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 text-black font-bold rounded-lg text-sm transition shadow">
+        🔊 Tap to Enable Monitor Audio
+      </button>
+    </div>
+
     <!-- Talkback Alert Banner (Shows when engineer is speaking) -->
     <div id="talkback-alert" class="hidden mb-4 p-3 bg-red-600/20 border border-red-500 rounded-lg text-red-400 text-center text-sm font-semibold animate-pulse">
       🔴 ENGINEER TALKBACK ACTIVE
@@ -48,6 +56,9 @@
     </main>
   </div>
 
+  <!-- Hidden Audio Element for playing incoming stream chunks -->
+  <audio id="talkback-audio" style="display:none;"></audio>
+
   <footer class="mt-8 pt-4 border-t border-gray-800 text-center text-xs text-gray-500">
     StageLink Live Core &bull; Zero Latency Monitor
   </footer>
@@ -63,6 +74,19 @@
     const connText = document.getElementById('conn-text');
     const mixSlidersContainer = document.getElementById('mix-sliders');
     const talkbackAlert = document.getElementById('talkback-alert');
+    const unlockAudioBtn = document.getElementById('unlock-audio-btn');
+    const audioUnlockBanner = document.getElementById('audio-unlock-banner');
+    const talkbackAudio = document.getElementById('talkback-audio');
+
+    let audioUnlocked = false;
+
+    unlockAudioBtn.addEventListener('click', () => {
+      // Force play an empty sound or load state to unlock mobile audio context sandbox
+      talkbackAudio.play().catch(() => {});
+      audioUnlocked = true;
+      audioUnlockBanner.style.display = 'none';
+      console.log('Mobile audio successfully unlocked by user gesture.');
+    });
 
     socket.on('connect', () => {
       connDot.classList.remove('bg-red-600');
@@ -107,31 +131,28 @@
       });
     }
 
-    // Web Audio API Talkback Audio Stream Receiver
-    const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    // Direct Blob Audio Chunk Queue Streaming
+    socket.on('incoming-talkback', (audioChunk) => {
+      if (!audioUnlocked) return; // Ignore if user hasn't tapped unlock yet
 
-    socket.on('incoming-talkback', async (audioChunk) => {
       talkbackAlert.classList.remove('hidden');
+
       try {
-        if (audioContext.state === 'suspended') {
-          await audioContext.resume();
-        }
-
         const blob = new Blob([audioChunk], { type: 'audio/webm' });
-        const arrayBuffer = await blob.arrayBuffer();
-        const decodedBuffer = await audioContext.decodeAudioData(arrayBuffer);
+        const audioUrl = URL.createObjectURL(blob);
         
-        const source = audioContext.createBufferSource();
-        source.buffer = decodedBuffer;
-        source.connect(audioContext.destination);
-        source.start(0);
-
-        source.onended = () => {
-          talkbackAlert.classList.add('hidden');
-        };
+        talkbackAudio.src = audioUrl;
+        talkbackAudio.play().catch(err => {
+          console.warn('Playback error:', err);
+        });
       } catch (err) {
-        console.error('Error decoding/playing talkback audio:', err);
+        console.error('Error handling talkback chunk:', err);
       }
+
+      clearTimeout(window.talkbackTimeout);
+      window.talkbackTimeout = setTimeout(() => {
+        talkbackAlert.classList.add('hidden');
+      }, 500);
     });
   </script>
 </body>
