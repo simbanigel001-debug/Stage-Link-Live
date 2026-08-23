@@ -2,6 +2,11 @@ const express = require('express');
 const http = require('http');
 const socketIo = require('socket.io');
 const cors = require('cors');
+const fs = require('fs');
+const path = require('path');
+
+// Import driver manager (assumes drivers/mixer-manager.js exists)
+const MixerManager = require('./drivers/mixer-manager');
 
 // Initialize Express application
 const app = express();
@@ -17,6 +22,10 @@ const io = socketIo(server, {
 app.use(cors());
 app.use(express.json());
 app.use(express.static('public'));
+
+// Initialize the active hardware mixer driver (defaulting to x32)
+const activeMixer = new MixerManager({ type: process.env.MIXER_TYPE || 'x32', ip: '192.168.1.100' });
+activeMixer.connect();
 
 // Mock data: Musicians with initial mix dictionaries
 const musicians = [
@@ -87,14 +96,12 @@ app.get('/api/state', (req, res) => {
 app.post('/api/musicians', (req, res) => {
   const { name, instrument } = req.body;
 
-  // Validate request
   if (!name || !instrument) {
     return res.status(400).json({
       error: 'Missing required fields: name and instrument'
     });
   }
 
-  // Create new musician object
   const newMusician = {
     id: musicians.length > 0 ? Math.max(...musicians.map(m => m.id)) + 1 : 1,
     name,
@@ -107,16 +114,13 @@ app.post('/api/musicians', (req, res) => {
     }
   };
 
-  // Add to musicians array
   musicians.push(newMusician);
 
-  // Broadcast state update event to all connected clients
   io.emit('state_update', {
     musicians,
     audioChannels
   });
 
-  // Return the new musician object
   res.status(201).json(newMusician);
 });
 
@@ -134,7 +138,6 @@ io.on('connection', (socket) => {
   socket.on('update_mix', (data) => {
     const { musicianId, mixUpdate } = data;
 
-    // Find the musician and update their mix
     const musician = musicians.find(m => m.id === musicianId);
     if (musician) {
       musician.mix = {
@@ -142,12 +145,56 @@ io.on('connection', (socket) => {
         ...mixUpdate
       };
 
-      // Broadcast the updated mix to all connected clients
       io.emit('mix_updated', {
         musicianId,
         mix: musician.mix,
         musicians
       });
+    }
+  });
+
+  // Listen for hardware mixer brand switching
+  socket.on('set-mixer-type', (data) => {
+    // data.type = 'x32' | 'studiolive' | 'yamaha'
+    if (activeMixer && typeof activeMixer.switchDriver === 'function') {
+      activeMixer.switchDriver(data.type);
+      console.log(`[Mixer Manager] Switched active hardware protocol to: ${data.type}`);
+    }
+  });
+
+  // Listen for channel volume changes to push to the physical desk driver
+  socket.on('update_channel_level', (data) => {
+    // data = { channel, level }
+    if (activeMixer) {
+      activeMixer.updateChannel(data.channel, data.level);
+    }
+  });
+
+  // Save current preset states to JSON
+  socket.on('save-preset', (data) => {
+    // data = { name, currentLevels }
+    const presetPath = path.join(__dirname, 'presets', `${data.name}.json`);
+    
+    if (!fs.existsSync(path.dirname(presetPath))) {
+      fs.mkdirSync(path.dirname(presetPath), { recursive: true });
+    }
+
+    fs.writeFileSync(presetPath, JSON.stringify(data.currentLevels, null, 2));
+    console.log(`[Presets] Saved preset: ${data.name}`);
+    socket.emit('preset-saved', { success: true, name: data.name });
+  });
+
+  // Load preset states from JSON
+  socket.on('load-preset', (data) => {
+    // data = { name }
+    const presetPath = path.join(__dirname, 'presets', `${data.name}.json`);
+    
+    if (fs.existsSync(presetPath)) {
+      const presetData = JSON.parse(fs.readFileSync(presetPath, 'utf8'));
+      console.log(`[Presets] Loaded preset: ${data.name}`);
+      io.emit('apply-preset', presetData);
+    } else {
+      socket.emit('error', { message: 'Preset not found' });
     }
   });
 
