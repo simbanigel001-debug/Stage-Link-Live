@@ -1,0 +1,39 @@
+# Node modules
+node_modules/
+
+# Environment configuration
+.env
+.env.*
+
+# Operating system files
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Local logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Build / distribution artifacts
+dist/
+build/
+out/
+coverage/
+.cache/
+.next/
+*.tsbuildinfo
+
+# Optional: editor directories
+.vscode/
+.idea/
+
+# Ignore lockfiles for package managers if you intentionally want them untracked
+# (remove these lines if you want to keep lockfiles in the repo)
+# package-lock.json
+# yarn.lock
+# pnpm-lock.yaml
