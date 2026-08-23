@@ -1,1 +1,16 @@
-package.json
+json
+{
+  "name": "stagelink-live-core" ,
+  "version":"0.1.0" ,
+  "description": "StageLink Live Core Audio Server and Engineer Dashboard",
+  "main": "server.js",
+  "scripts": {
+    "starts": "node server.js"
+  },
+  "dependencies":{
+    "cors": "^2.8.5",
+    "express": "^4.19.2",
+    "socket.io": "^4.7.5"
+  }
+}
+  
