@@ -3,205 +3,136 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>StageLink Live - Musician Mix</title>
+  <title>StageLink Mobile - Musician Mix</title>
+  <!-- Tailwind CSS via CDN -->
   <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Socket.IO client -->
+  <script src="/socket.io/socket.io.js"></script>
   <style>
     :root { color-scheme: dark; }
-    body { background: linear-gradient(180deg,#04060a,#06101a); }
-    /* Larger touch targets for mobile sliders */
-    input[type=range] { -webkit-appearance: none; appearance: none; height: 36px; }
-    input[type=range]::-webkit-slider-runnable-track { height: 8px; background: rgba(255,255,255,0.08); border-radius: 999px; }
-    input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 28px; height: 28px; background: #10b981; border-radius: 999px; margin-top: -10px; box-shadow: 0 2px 6px rgba(16,185,129,0.18); }
-    input[type=range]:focus { outline: none; }
+    body { background: linear-gradient(180deg,#0b0f14,#081018); }
+    .slider { -webkit-appearance: none; appearance: none; width: 100%; height: 8px; border-radius: 4px; background: rgba(255,255,255,0.1); outline: none; }
+    .slider::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 24px; height: 24px; border-radius: 50%; background: #10b981; cursor: pointer; }
+    .status-dot { width: 12px; height: 12px; border-radius: 999px; display: inline-block; box-shadow: 0 0 8px rgba(0,0,0,0.6); }
   </style>
 </head>
-<body class="text-gray-100 min-h-screen">
-  <div class="max-w-xl mx-auto p-4 space-y-4">
+<body class="text-gray-100 min-h-screen p-4 max-w-md mx-auto flex flex-col justify-between">
+  <div>
     <!-- Header -->
-    <header class="flex items-start justify-between space-x-3">
+    <header class="flex items-center justify-between pb-4 border-b border-gray-800 mb-6">
       <div>
-        <div class="flex items-baseline space-x-2">
-          <h1 id="musician-name" class="text-lg font-semibold">Musician</h1>
-          <span id="musician-role" class="text-sm text-gray-400">(Role)</span>
-        </div>
-        <div class="text-xs text-gray-400 mt-1">ID: <span id="musician-id">-</span></div>
+        <h1 class="text-lg font-bold">Musician <span class="text-xs font-normal text-gray-400">(Performer)</span></h1>
+        <p id="musician-id-display" class="text-xs text-gray-400">Loading ID...</p>
       </div>
-      <div class="flex flex-col items-end space-y-2">
-        <div class="flex items-center space-x-2">
-          <span id="socket-dot" class="w-3 h-3 rounded-full bg-red-600 inline-block shadow-sm"></span>
-          <span id="socket-text" class="text-sm text-gray-300">Socket.io: Disconnected</span>
-        </div>
-        <div class="px-3 py-1 rounded-md bg-emerald-600 text-black text-xs font-semibold">WIRED MONITOR ACTIVE (Zero Latency)</div>
+      <div class="flex items-center space-x-2">
+        <span id="conn-dot" class="status-dot bg-red-600"></span>
+        <span id="conn-text" class="text-xs text-gray-300">Connecting...</span>
       </div>
     </header>
 
-    <!-- Talkback Status Alert -->
-    <div id="talkback-status" class="hidden bg-red-900/40 border border-red-600 text-red-200 px-3 py-2 rounded text-xs flex items-center space-x-2">
-      <span class="animate-pulse w-2 h-2 rounded-full bg-red-500"></span>
-      <span>Engineer is speaking (Talkback Active)</span>
+    <!-- Talkback Alert Banner (Shows when engineer is speaking) -->
+    <div id="talkback-alert" class="hidden mb-4 p-3 bg-red-600/20 border border-red-500 rounded-lg text-red-400 text-center text-sm font-semibold animate-pulse">
+      🔴 ENGINEER TALKBACK ACTIVE
     </div>
 
-    <!-- Mix Controls -->
-    <main class="bg-gray-900/40 rounded-lg border border-gray-700 p-3">
-      <div class="flex items-center justify-between mb-3">
-        <h2 class="text-sm font-medium">Personal Mix</h2>
-        <div class="text-xs text-gray-400">Adjust levels for your in-ear monitor</div>
+    <!-- Personal Mix Controls -->
+    <main class="space-y-6">
+      <div class="flex items-center justify-between">
+        <h2 class="text-sm font-medium text-gray-300 uppercase tracking-wider">Personal Mix</h2>
+        <span class="text-xs text-gray-400">Adjust levels for your in-ear monitor</span>
       </div>
 
-      <div id="sliders" class="space-y-3">
-        <!-- sliders injected here -->
+      <div id="mix-sliders" class="space-y-4">
+        <!-- Sliders injected dynamically -->
       </div>
-
-      <div class="mt-4 text-xs text-gray-400">Auto-syncs in real-time with the stage engineer. Fader moves emit 'update_mix' events.</div>
     </main>
-
-    <footer class="text-center text-xs text-gray-500 pt-2">StageLink Live — Musician Interface</footer>
   </div>
 
-  <script src="https://cdn.socket.io/4.6.1/socket.io.min.js"></script>
+  <footer class="mt-8 pt-4 border-t border-gray-800 text-center text-xs text-gray-500">
+    StageLink Live Core &bull; Zero Latency Monitor
+  </footer>
+
   <script>
-    // Utility: read query params
-    function getParam(name, fallback) {
-      const url = new URL(window.location.href);
-      return url.searchParams.get(name) || fallback;
-    }
+    const socket = io();
 
-    const musicianName = getParam('name', 'Musician');
-    const musicianRole = getParam('role', 'Performer');
-    const musicianId = getParam('musician', getParam('id', ('m-' + Math.random().toString(36).slice(2,9))));
+    const urlParams = new URLSearchParams(window.location.search);
+    const musicianId = urlParams.get('id') || '1';
+    document.getElementById('musician-id-display').textContent = `ID: ${musicianId}`;
 
-    document.getElementById('musician-name').textContent = musicianName;
-    document.getElementById('musician-role').textContent = `(${musicianRole})`;
-    document.getElementById('musician-id').textContent = musicianId;
+    const connDot = document.getElementById('conn-dot');
+    const connText = document.getElementById('conn-text');
+    const mixSlidersContainer = document.getElementById('mix-sliders');
+    const talkbackAlert = document.getElementById('talkback-alert');
 
-    // Channels (default 16)
-    const defaultChannels = ['Kick','Snare','Hi-Hat','Tom 1','Tom 2','Floor Tom','OH L','OH R','Bass','Guitar','Keys','Lead Vocal','Backing 1','Backing 2','FX','Aux'];
-    const channelsParam = getParam('channels','');
-    const channels = channelsParam ? channelsParam.split(',') : defaultChannels;
-    const sliderContainer = document.getElementById('sliders');
-    const talkbackAlert = document.getElementById('talkback-status');
+    socket.on('connect', () => {
+      connDot.classList.remove('bg-red-600');
+      connDot.classList.add('bg-emerald-500');
+      connText.textContent = 'Socket.io: Connected';
+    });
 
-    // Current mix levels
-    const mix = {};
-    channels.forEach((ch,i)=> mix[i] = 50);
+    socket.on('disconnect', () => {
+      connDot.classList.remove('bg-emerald-500');
+      connDot.classList.add('bg-red-600');
+      connText.textContent = 'Disconnected';
+    });
 
-    // Render sliders (mobile-first: horizontal, large touch targets)
-    function renderSliders() {
-      sliderContainer.innerHTML = '';
-      channels.forEach((ch,i) => {
+    // Receive initial state and build mix sliders
+    socket.on('initial_state', (data) => {
+      renderMixControls(data.audioChannels);
+    });
+
+    function renderMixControls(channels) {
+      mixSlidersContainer.innerHTML = '';
+      channels.forEach((ch) => {
         const row = document.createElement('div');
-        row.className = 'flex items-center space-x-3';
+        row.className = 'bg-gray-900/40 p-4 rounded-lg border border-gray-800 space-y-2';
         row.innerHTML = `
-          <div class="w-24 text-sm">${escapeHtml(ch)}</div>
-          <div class="flex-1">
-            <input type="range" min="0" max="100" value="${mix[i]}" id="fader-${i}" data-channel="${i}" class="w-full" />
-            <div class="flex items-center justify-between text-xs text-gray-400 mt-1">
-              <div>Level</div>
-              <div id="val-${i}">${mix[i]}%</div>
-            </div>
+          <div class="flex justify-between items-center text-sm">
+            <span class="font-medium capitalize">${ch.name}</span>
+            <span id="val-${ch.id}" class="text-xs text-gray-400">50%</span>
           </div>
+          <input type="range" min="0" max="100" value="50" class="slider" data-channel-id="${ch.id}" />
         `;
-        sliderContainer.appendChild(row);
+        mixSlidersContainer.appendChild(row);
 
-        const input = row.querySelector('#fader-'+i);
-        const valEl = row.querySelector('#val-'+i);
-        input.addEventListener('input', (ev) => {
-          const v = Number(ev.target.value);
-          valEl.textContent = v + '%';
-          mix[i] = v;
-          emitUpdate(i, v);
+        const slider = row.querySelector('input');
+        slider.addEventListener('input', (e) => {
+          const val = e.target.value;
+          document.getElementById(`val-${ch.id}`).textContent = `${val}%`;
+          socket.emit('update_mix', {
+            musicianId: musicianId,
+            mixUpdate: { [ch.name]: val / 100 }
+          });
         });
       });
     }
 
-    function escapeHtml(s) {
-      return String(s||'').replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; });
-    }
+    // Web Audio API Talkback Audio Stream Receiver
+    const audioContext = new (window.AudioContext || window.webkitAudioContext)();
 
-    // Socket.io connection
-    const socket = io();
-    const socketDot = document.getElementById('socket-dot');
-    const socketText = document.getElementById('socket-text');
-
-    function setConnected(yes) {
-      if (yes) {
-        socketDot.classList.remove('bg-red-600');
-        socketDot.classList.add('bg-emerald-500');
-        socketText.textContent = 'Socket.io: Connected';
-      } else {
-        socketDot.classList.remove('bg-emerald-500');
-        socketDot.classList.add('bg-red-600');
-        socketText.textContent = 'Socket.io: Disconnected';
-      }
-    }
-
-    socket.on('connect', () => {
-      setConnected(true);
-      socket.emit('musician_join', { musicianId, name: musicianName, role: musicianRole });
-      requestCurrentMix();
-    });
-    socket.on('disconnect', () => setConnected(false));
-    socket.on('connect_error', () => setConnected(false));
-
-    function emitUpdate(channel, value) {
-      const payload = { musicianId, channel, value };
-      try {
-        socket.emit('update_mix', payload);
-      } catch (e) {}
-    }
-
-    socket.on('mix_updated', (data) => {
-      try {
-        if (!data) return;
-        if (data.musicianId && data.musicianId !== musicianId) return;
-
-        if (data.mix && typeof data.mix === 'object') {
-          Object.keys(data.mix).forEach(ch => {
-            const idx = Number(ch);
-            const val = Number(data.mix[ch]);
-            updateSliderUI(idx, val);
-          });
-        } else if (typeof data.channel !== 'undefined') {
-          const idx = Number(data.channel);
-          const val = Number(data.value);
-          updateSliderUI(idx, val);
-        } else if (Array.isArray(data)) {
-          data.forEach((v,idx) => updateSliderUI(idx, Number(v)));
-        }
-      } catch (e) { console.error('mix_updated handler error', e); }
-    });
-
-    // Receive and play incoming talkback audio chunks from the engineer
     socket.on('incoming-talkback', async (audioChunk) => {
       talkbackAlert.classList.remove('hidden');
       try {
+        if (audioContext.state === 'suspended') {
+          await audioContext.resume();
+        }
+
         const blob = new Blob([audioChunk], { type: 'audio/webm' });
-        const audioUrl = URL.createObjectURL(blob);
-        const audio = new Audio(audioUrl);
-        audio.play();
-        audio.onended = () => {
+        const arrayBuffer = await blob.arrayBuffer();
+        const decodedBuffer = await audioContext.decodeAudioData(arrayBuffer);
+        
+        const source = audioContext.createBufferSource();
+        source.buffer = decodedBuffer;
+        source.connect(audioContext.destination);
+        source.start(0);
+
+        source.onended = () => {
           talkbackAlert.classList.add('hidden');
         };
       } catch (err) {
-        console.error('Error playing talkback audio:', err);
+        console.error('Error decoding/playing talkback audio:', err);
       }
     });
-
-    function updateSliderUI(channelIdx, value) {
-      if (!(channelIdx in mix)) return;
-      mix[channelIdx] = value;
-      const input = document.getElementById('fader-'+channelIdx);
-      const valEl = document.getElementById('val-'+channelIdx);
-      if (input) input.value = value;
-      if (valEl) valEl.textContent = value + '%';
-    }
-
-    function requestCurrentMix() {
-      socket.emit('request_mix', { musicianId });
-    }
-
-    renderSliders();
-    document.addEventListener('touchstart', function() {}, {passive:true});
   </script>
 </body>
 </html>
