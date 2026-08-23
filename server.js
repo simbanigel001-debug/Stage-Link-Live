@@ -155,7 +155,6 @@ io.on('connection', (socket) => {
 
   // Listen for hardware mixer brand switching
   socket.on('set-mixer-type', (data) => {
-    // data.type = 'x32' | 'studiolive' | 'yamaha'
     if (activeMixer && typeof activeMixer.switchDriver === 'function') {
       activeMixer.switchDriver(data.type);
       console.log(`[Mixer Manager] Switched active hardware protocol to: ${data.type}`);
@@ -164,7 +163,6 @@ io.on('connection', (socket) => {
 
   // Listen for channel volume changes to push to the physical desk driver
   socket.on('update_channel_level', (data) => {
-    // data = { channel, level }
     if (activeMixer) {
       activeMixer.updateChannel(data.channel, data.level);
     }
@@ -172,7 +170,6 @@ io.on('connection', (socket) => {
 
   // Save current preset states to JSON
   socket.on('save-preset', (data) => {
-    // data = { name, currentLevels }
     const presetPath = path.join(__dirname, 'presets', `${data.name}.json`);
     
     if (!fs.existsSync(path.dirname(presetPath))) {
@@ -186,7 +183,6 @@ io.on('connection', (socket) => {
 
   // Load preset states from JSON
   socket.on('load-preset', (data) => {
-    // data = { name }
     const presetPath = path.join(__dirname, 'presets', `${data.name}.json`);
     
     if (fs.existsSync(presetPath)) {
@@ -196,6 +192,11 @@ io.on('connection', (socket) => {
     } else {
       socket.emit('error', { message: 'Preset not found' });
     }
+  });
+
+  // Handle talkback audio streaming from engineer dashboard to musicians
+  socket.on('talkback-audio-chunk', (audioChunk) => {
+    socket.broadcast.emit('incoming-talkback', audioChunk);
   });
 
   // Handle disconnect
