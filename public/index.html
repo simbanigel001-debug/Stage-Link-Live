@@ -69,14 +69,14 @@
             <input id="musician-name" required class="w-full px-3 py-2 rounded bg-gray-900 border border-gray-700 text-gray-100" placeholder="e.g. Alex" />
           </div>
           <div>
-            <label class="block text-sm text-gray-300 mb-1">Role</label>
-            <select id="musician-role" class="w-full px-3 py-2 rounded bg-gray-900 border border-gray-700 text-gray-100">
-              <option>Drummer</option>
-              <option>Bass</option>
-              <option>Guitar</option>
-              <option>Keyboard</option>
-              <option>Vocal</option>
-              <option>Other</option>
+            <label class="block text-sm text-gray-300 mb-1">Instrument</label>
+            <select id="musician-instrument" class="w-full px-3 py-2 rounded bg-gray-900 border border-gray-700 text-gray-100">
+              <option value="drums">Drummer</option>
+              <option value="bass">Bass</option>
+              <option value="guitar">Guitar</option>
+              <option value="keyboard">Keyboard</option>
+              <option value="vocals">Vocal</option>
+              <option value="other">Other</option>
             </select>
           </div>
           <div>
@@ -170,7 +170,17 @@
     talkbackBtn.addEventListener('mousedown', async () => {
       try {
         localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        mediaRecorder = new MediaRecorder(localStream);
+        
+        // Ensure browser compatibility for recorded audio chunks
+        const options = { mimeType: 'audio/webm;codecs=opus' };
+        if (!MediaRecorder.isTypeSupported(options.mimeType)) {
+          options.mimeType = 'audio/mp4';
+          if (!MediaRecorder.isTypeSupported(options.mimeType)) {
+            options.mimeType = ''; 
+          }
+        }
+
+        mediaRecorder = new MediaRecorder(localStream, options);
         
         mediaRecorder.ondataavailable = (event) => {
           if (event.data.size > 0) {
@@ -230,7 +240,7 @@
         const res = await fetch('/api/state', {cache: 'no-store'});
         if (!res.ok) throw new Error('Network response not ok');
         const data = await res.json();
-        musicians = data.musicians || data.activeMusicians || data || [];
+        musicians = data.musicians || [];
         updateConnection(true);
         renderMusicians();
       } catch (err) {
@@ -254,7 +264,7 @@
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
       const name = document.getElementById('musician-name').value.trim();
-      const role = document.getElementById('musician-role').value;
+      const instrument = document.getElementById('musician-instrument').value;
       if (!name) {
         formMsg.textContent = 'Name is required.';
         return;
@@ -264,7 +274,7 @@
         const res = await fetch('/api/musicians', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name, role })
+          body: JSON.stringify({ name, instrument })
         });
         if (!res.ok) throw new Error('Create failed');
         const created = await res.json();
@@ -284,14 +294,14 @@
       musicianCount.textContent = `${musicians.length} active`;
 
       musicians.forEach((m, idx) => {
-        const id = m.id || m._id || slugify(m.name || ('musician-'+idx));
+        const id = m.id || slugify(m.name || ('musician-'+idx));
         const card = document.createElement('div');
         card.className = 'bg-gray-900/50 p-3 rounded border border-gray-700 flex flex-col items-stretch';
         card.innerHTML = `
           <div class="flex items-center justify-between mb-2">
             <div>
               <div class="text-sm font-semibold">${escapeHtml(m.name || 'Unknown')}</div>
-              <div class="text-xs text-gray-400">${escapeHtml(m.role || '')}</div>
+              <div class="text-xs text-gray-400">${escapeHtml(m.instrument || '')}</div>
             </div>
             <div class="text-xs text-gray-400">ID: ${escapeHtml(String(id))}</div>
           </div>
@@ -308,8 +318,7 @@
         musiciansGrid.appendChild(card);
 
         const qrEl = card.querySelector('.qr-target');
-        const musicianId = id;
-        const url = generateMixUrl(musicianId);
+        const url = generateMixUrl(id);
         if (window.QRCode && qrEl) {
           const canvas = document.createElement('canvas');
           canvas.width = 160; canvas.height = 160;
