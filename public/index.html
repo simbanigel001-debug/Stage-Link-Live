@@ -8,6 +8,8 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <!-- QR code generator -->
   <script src="https://cdn.jsdelivr.net/npm/qrcode/build/qrcode.min.js"></script>
+  <!-- Socket.IO client -->
+  <script src="/socket.io/socket.io.js"></script>
   <style>
     /* Small customizations for a darker live-sound friendly look */
     :root { color-scheme: dark; }
@@ -26,6 +28,15 @@
         <p class="text-sm text-gray-400">Monitor and manage active musicians and channel inputs</p>
       </div>
       <div class="flex items-center space-x-4">
+        <!-- Mixer Type Selector -->
+        <div class="flex items-center space-x-2">
+          <label for="mixer-select" class="text-sm text-gray-300">Mixer:</label>
+          <select id="mixer-select" class="px-3 py-1 bg-gray-900 border border-gray-700 text-gray-100 rounded text-sm hover:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-emerald-500">
+            <option value="x32">X32</option>
+            <option value="studiolive">StudioLive</option>
+            <option value="yamaha">Yamaha</option>
+          </select>
+        </div>
         <div id="connection" class="flex items-center space-x-2">
           <span id="conn-dot" class="status-dot bg-red-600"></span>
           <span id="conn-text" class="text-sm text-gray-300">Disconnected</span>
@@ -89,6 +100,17 @@
   </div>
 
   <script>
+    // Initialize Socket.IO connection
+    const socket = io();
+
+    // Mixer type selector
+    const mixerSelect = document.getElementById('mixer-select');
+    mixerSelect.addEventListener('change', (e) => {
+      const selectedMixer = e.target.value;
+      console.log(`[Mixer] Changing mixer type to: ${selectedMixer}`);
+      socket.emit('set-mixer-type', { brand: selectedMixer });
+    });
+
     // Utility to slugify names for placeholder links
     function slugify(text) {
       return text.toString().toLowerCase().replace(/\s+/g,'-').replace(/[^a-z0-9-_]/g,'');
