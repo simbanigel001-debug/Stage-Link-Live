@@ -149,31 +149,7 @@ trackingEngine.on('POSITION_UPDATE', (payload) => {
     });
   }
 });
-const talkBtn = document.getElementById('talkToEngineerBtn');
-let mediaRecorder;
 
-// Start transmitting audio on press
-talkBtn.addEventListener('mousedown', async () => {
-  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-  mediaRecorder = new MediaRecorder(stream);
-
-  mediaRecorder.ondataavailable = (event) => {
-    socket.emit('talkback-stream', {
-      senderId: musicianId,
-      target: 'engineer', // or 'band'
-      audioChunk: event.data
-    });
-  };
-
-  mediaRecorder.start(100); // Send audio every 100ms
-});
-
-// Stop transmitting on release
-talkBtn.addEventListener('mouseup', () => {
-  if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-    mediaRecorder.stop();
-  }
-});
 // REST Endpoints
 app.get('/api/state', (req, res) => {
   res.json({ musicians, audioChannels, trackingProvider: trackingEngine.activeProviderKey });
@@ -282,9 +258,18 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Audio Streaming / Talkback
-  socket.on('talkback-audio-chunk', (audioChunk) => {
-    socket.broadcast.emit('incoming-talkback', audioChunk);
+  // Audio Streaming / Talkback Routing
+  socket.on('talkback-stream', (data) => {
+    if (data.target === 'engineer') {
+      // Route exclusively to Engineer Dashboard
+      io.emit('engineer-incoming-talkback', data);
+    } else if (data.target === 'band') {
+      // Broadcast to all other musicians
+      socket.broadcast.emit('band-intercom-stream', data);
+    } else {
+      // Fallback global broadcast
+      socket.broadcast.emit('incoming-talkback', data);
+    }
   });
 
   socket.on('disconnect', () => {
