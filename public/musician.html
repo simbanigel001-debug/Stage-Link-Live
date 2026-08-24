@@ -2,14 +2,19 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
   <title>StageLink Live - Personal IEM Mix</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="/socket.io/socket.io.js"></script>
   <style>
     :root { color-scheme: dark; }
-    body { background: #0b0f14; touch-action: manipulation; }
-    /* Custom vertical touch-friendly range input styling */
+    body { 
+      background: #0b0f14; 
+      touch-action: manipulation;
+      /* Handles iPhone Home Bar Padding */
+      padding-bottom: max(1rem, env(safe-area-inset-bottom));
+      padding-top: env(safe-area-inset-top);
+    }
     input[type=range] {
       accent-color: #10b981;
     }
@@ -75,17 +80,16 @@
     </div>
 
   </main>
-<div class="talkback-controls">
-  <!-- Press-to-talk to Engineer -->
-  <button id="talkToEngineerBtn" class="ptt-btn">
-    🎤 Call Engineer
-  </button>
-  
-  <!-- Channel talkback -->
-  <button id="talkToBandBtn" class="ptt-btn">
-    🎸 Band Intercom
-  </button>
-</div>
+
+  <!-- PTT Intercom Controls -->
+  <div class="grid grid-cols-2 gap-3 mb-4">
+    <button id="talkToEngineerBtn" class="flex items-center justify-center gap-2 py-3.5 px-4 bg-gray-900 border border-gray-800 hover:border-emerald-500/50 text-gray-200 rounded-xl font-semibold text-xs uppercase tracking-wider active:bg-emerald-950 active:border-emerald-500 active:scale-95 transition">
+      🎤 Call Engineer
+    </button>
+    <button id="talkToBandBtn" class="flex items-center justify-center gap-2 py-3.5 px-4 bg-gray-900 border border-gray-800 hover:border-emerald-500/50 text-gray-200 rounded-xl font-semibold text-xs uppercase tracking-wider active:bg-emerald-950 active:border-emerald-500 active:scale-95 transition">
+      🎸 Band Intercom
+    </button>
+  </div>
   
   <!-- Footer Info -->
   <footer class="text-center border-t border-gray-800 pt-3">
@@ -93,11 +97,9 @@
   </footer>
 
   <script>
-    // Extract Musician ID from URL Query String (?id=1)
     const urlParams = new URLSearchParams(window.location.search);
     const musicianId = parseInt(urlParams.get('id'), 10);
 
-    // DOM Elements
     const nameEl = document.getElementById('musician-name');
     const instEl = document.getElementById('musician-inst');
     const statusDot = document.getElementById('status-dot');
@@ -117,7 +119,6 @@
       instEl.textContent = 'Please scan a valid QR code';
     }
 
-    // Connect Socket.IO
     const socket = io();
 
     socket.on('connect', () => {
@@ -131,7 +132,6 @@
       statusText.textContent = 'Offline';
     });
 
-    // Fetch Initial Musician Details & Mix
     async function fetchState() {
       if (!musicianId) return;
       try {
@@ -153,7 +153,6 @@
       }
     }
 
-    // Update Local Controls UI
     function updateUI() {
       masterVol.value = currentMix.volume;
       masterVolDisp.textContent = `${Math.round(currentMix.volume * 100)}%`;
@@ -163,7 +162,6 @@
       else if (currentMix.pan < 0) panDisp.textContent = `${Math.abs(Math.round(currentMix.pan * 100))}% Left`;
       else panDisp.textContent = `${Math.round(currentMix.pan * 100)}% Right`;
 
-      // Mute state
       if (currentMix.mute) {
         btnMute.className = 'py-4 bg-red-600 border border-red-500 text-white rounded-xl font-bold text-sm active:scale-95 transition';
         btnMute.textContent = 'MUTED';
@@ -172,7 +170,6 @@
         btnMute.textContent = 'MUTE MIX';
       }
 
-      // Solo state
       if (currentMix.solo) {
         btnSolo.className = 'py-4 bg-amber-500 border border-amber-400 text-black rounded-xl font-bold text-sm active:scale-95 transition';
         btnSolo.textContent = 'SOLO ACTIVE';
@@ -182,7 +179,6 @@
       }
     }
 
-    // Event Listeners for Controls
     masterVol.addEventListener('input', (e) => {
       currentMix.volume = parseFloat(e.target.value);
       updateUI();
@@ -215,7 +211,6 @@
       });
     }
 
-    // Real-Time Syncing when Foh/Engineer alters mix
     socket.on('mix_updated', (data) => {
       if (data.musicianId === musicianId && data.mix) {
         currentMix = { ...data.mix };
@@ -223,12 +218,10 @@
       }
     });
 
-    // Web Audio Intercom Stream Decoding for Talkback
     let audioCtx = null;
     let talkbackTimeout = null;
 
     socket.on('incoming-talkback', async (arrayBuffer) => {
-      // Show incoming audio banner
       talkbackBanner.classList.remove('hidden');
       clearTimeout(talkbackTimeout);
       talkbackTimeout = setTimeout(() => {
@@ -249,7 +242,6 @@
         source.connect(audioCtx.destination);
         source.start(0);
       } catch (e) {
-        // Log playback errors (e.g. user interaction requirements prior to audio playback)
         console.warn('Audio streaming buffer playback pending user tap.', e);
       }
     });
