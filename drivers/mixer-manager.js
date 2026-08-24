@@ -2,24 +2,25 @@
 
 const StudioLiveDriver = require('./studiolive-driver');
 const X32Driver = require('./x32-driver');
+const YamahaDriver = require('./yamaha-driver');
 
 class MixerManager {
   /**
    * Create a MixerManager that can initialize and manage different mixer types.
    * @param {Object} config - Configuration object
-   * @param {string} config.type - Mixer type: 'studiolive' or 'x32'
+   * @param {string} config.type - Mixer type: 'studiolive', 'x32', or 'yamaha'
    * @param {string} config.ip - Mixer IP address
-   * @param {number} config.port - Mixer UDP port
+   * @param {number} [config.port] - Mixer port
    */
   constructor(config) {
     if (!config) {
       throw new Error('MixerManager requires a config object.');
     }
-    if (!config.type || !config.ip || !config.port) {
-      throw new Error('MixerManager config requires type, ip, and port.');
+    if (!config.type || !config.ip) {
+      throw new Error('MixerManager config requires type and ip.');
     }
 
-    const validTypes = ['studiolive', 'x32'];
+    const validTypes = ['studiolive', 'x32', 'yamaha', 'cl', 'ql', 'tf'];
     if (!validTypes.includes(config.type.toLowerCase())) {
       throw new Error(`Invalid mixer type: ${config.type}. Must be one of: ${validTypes.join(', ')}`);
     }
@@ -37,14 +38,25 @@ class MixerManager {
    * @private
    */
   _initializeMixer() {
+    const port = this.config.port;
+
     switch (this.mixerType) {
       case 'studiolive':
-        this.mixer = new StudioLiveDriver(this.config.ip, this.config.port);
-        console.log(`[MixerManager] Initialized StudioLiveDriver for ${this.config.ip}:${this.config.port}`);
+      case 'presonus':
+        this.mixer = new StudioLiveDriver(this.config.ip, port || 53000);
+        console.log(`[MixerManager] Initialized StudioLiveDriver for ${this.config.ip}:${port || 53000}`);
         break;
       case 'x32':
-        this.mixer = new X32Driver(this.config.ip, this.config.port);
-        console.log(`[MixerManager] Initialized X32Driver for ${this.config.ip}:${this.config.port}`);
+      case 'm32':
+        this.mixer = new X32Driver(this.config.ip, port || 10023);
+        console.log(`[MixerManager] Initialized X32Driver for ${this.config.ip}:${port || 10023}`);
+        break;
+      case 'yamaha':
+      case 'cl':
+      case 'ql':
+      case 'tf':
+        this.mixer = new YamahaDriver({ ip: this.config.ip, port: port || 49280 });
+        console.log(`[MixerManager] Initialized YamahaDriver for ${this.config.ip}:${port || 49280}`);
         break;
       default:
         throw new Error(`Unsupported mixer type: ${this.mixerType}`);
@@ -72,9 +84,22 @@ class MixerManager {
   }
 
   /**
+   * Switch protocol/driver on the fly.
+   * @param {string} type - Mixer type name ('x32', 'studiolive', 'yamaha')
+   */
+  async switchDriver(type) {
+    console.log(`[MixerManager] Switching protocol from ${this.mixerType} to ${type}...`);
+    this.disconnect();
+    this.config.type = type;
+    this.mixerType = type.toLowerCase();
+    this._initializeMixer();
+    await this.connect();
+  }
+
+  /**
    * Update the volume level for a specific channel on the mixer.
    * @param {number} channel - Channel index
-   * @param {number} level - Volume level (0-100%)
+   * @param {number} level - Volume level (0-100% or float 0.0-1.0)
    * @returns {Promise<void>}
    */
   async updateChannel(channel, level) {
@@ -86,16 +111,37 @@ class MixerManager {
       return Promise.reject(new Error('Channel must be a non-negative number.'));
     }
 
-    if (!Number.isFinite(level) || level < 0 || level > 100) {
-      return Promise.reject(new Error('Level must be a number between 0 and 100.'));
-    }
+    // Normalize level if passed as percentage (0-100) or float (0-1)
+    const normalizedLevel = level > 1 ? level / 100 : level;
 
     try {
-      await this.mixer.setChannelVolume(channel, level);
-      console.log(`[MixerManager] Updated channel ${channel} to ${level}% on ${this.mixerType} mixer.`);
+      if (typeof this.mixer.setChannelVolume === 'function') {
+        await this.mixer.setChannelVolume(channel, level);
+      } else if (typeof this.mixer.setChannelLevel === 'function') {
+        await this.mixer.setChannelLevel(channel, normalizedLevel);
+      }
+      console.log(`[MixerManager] Updated channel ${channel} level on ${this.mixerType} mixer.`);
     } catch (err) {
       console.error(`[MixerManager] Error updating channel ${channel}:`, err);
       throw err;
+    }
+  }
+
+  /**
+   * Update spatial IEM bus send pan for a performer.
+   * @param {number} channel - Input Channel
+   * @param {number} bus - Target Aux/Bus pair
+   * @param {number} pan - Stereo Pan (-1.0 to +1.0)
+   */
+  async updateSpatialPan(channel, bus, pan) {
+    if (!this.connected || !this.mixer) return;
+
+    try {
+      if (typeof this.mixer.setBusSendPan === 'function') {
+        await this.mixer.setBusSendPan(channel, bus, pan);
+      }
+    } catch (err) {
+      console.error(`[MixerManager] Error updating spatial pan for channel ${channel}:`, err);
     }
   }
 
@@ -121,7 +167,7 @@ class MixerManager {
 
   /**
    * Get the current mixer type.
-   * @returns {string} The mixer type (e.g., 'studiolive', 'x32')
+   * @returns {string} The mixer type
    */
   getMixerType() {
     return this.mixerType;
@@ -136,8 +182,8 @@ class MixerManager {
   }
 
   /**
-   * Get the underlying mixer instance (for advanced use cases).
-   * @returns {StudioLiveDriver|X32Driver} The active mixer driver instance
+   * Get the underlying mixer instance.
+   * @returns {Object} The active mixer driver instance
    */
   getMixerInstance() {
     return this.mixer;
