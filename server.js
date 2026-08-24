@@ -276,7 +276,7 @@ app.use((err, req, res, next) => {
 
 // Start Server
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
+server.listen(PORT, '0.0.0.0' () => {
   console.log(`StageLink Live server running on port ${PORT}`);
   console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`Active Tracking Provider: ${trackingEngine.activeProviderKey}`);
