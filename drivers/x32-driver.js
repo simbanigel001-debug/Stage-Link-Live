@@ -1,190 +1,80 @@
-'use strict';
-
+// drivers/x32-driver.js
 const dgram = require('dgram');
 
 class X32Driver {
-  /**
-   * Create a driver for a Behringer X32 or Midas M32 mixer over UDP OSC.
-   * @param {string} ip - Mixer IP address
-   * @param {number} port - Mixer UDP port (default 10023 for X32/M32)
-   */
-  constructor(ip, port) {
-    if (!ip || !port) {
-      throw new Error('X32Driver requires ip and port.');
-    }
-    this.ip = ip;
-    this.port = port;
-    this.socket = null;
-    this.connected = false;
-    this._onMessage = this._onMessage.bind(this);
-    this._onError = this._onError.bind(this);
+  constructor(config = {}) {
+    this.name = 'X32';
+    this.ip = config.ip || '192.168.1.100';
+    this.port = config.port || 10023; // Default X32 OSC port
+    this.client = dgram.createSocket('udp4');
+    this.keepAliveInterval = null;
   }
 
   connect() {
-    if (this.connected) {
-      console.log(`[X32Driver] Already connected to ${this.ip}:${this.port}`);
-      return Promise.resolve();
-    }
+    console.log(`[X32 Driver] Binding UDP client for ${this.ip}:${this.port}...`);
+    
+    // X32 requires a periodic `/xremote` OSC string to keep receiving state updates
+    this.sendOSC('/xremote');
+    this.keepAliveInterval = setInterval(() => {
+      this.sendOSC('/xremote');
+    }, 8000);
 
-    return new Promise((resolve, reject) => {
-      this.socket = dgram.createSocket('udp4');
-
-      this.socket.on('error', this._onError);
-      this.socket.on('message', this._onMessage);
-
-      try {
-        this.socket.connect(this.port, this.ip, (err) => {
-          if (err) {
-            console.error(`[X32Driver] Failed to connect UDP socket to ${this.ip}:${this.port}:`, err);
-            this.socket.close();
-            this.socket = null;
-            return reject(err);
-          }
-          this.connected = true;
-          console.log(`[X32Driver] UDP socket connected to ${this.ip}:${this.port}`);
-          resolve();
-        });
-      } catch (ex) {
-        console.error(`[X32Driver] Exception while connecting:`, ex);
-        if (this.socket) {
-          try { this.socket.close(); } catch (e) {}
-          this.socket = null;
-        }
-        reject(ex);
-      }
-    });
-  }
-
-  setChannelVolume(channelIndex, levelPercent) {
-    if (!this.connected || !this.socket) {
-      return Promise.reject(new Error('Not connected. Call connect() before setChannelVolume.'));
-    }
-    if (!Number.isFinite(channelIndex) || channelIndex < 0) {
-      return Promise.reject(new Error('channelIndex must be a non-negative number.'));
-    }
-    if (!Number.isFinite(levelPercent) || levelPercent < 0 || levelPercent > 100) {
-      return Promise.reject(new Error('levelPercent must be a number between 0 and 100.'));
-    }
-
-    // Normalize percentage to OSC float value (0.0 to 1.0)
-    const normalized = Math.max(0, Math.min(1, levelPercent / 100));
-    const messageBuffer = this._buildOscFaderMessage(channelIndex, normalized);
-
-    return new Promise((resolve, reject) => {
-      this.socket.send(messageBuffer, (err) => {
-        if (err) {
-          console.error(`[X32Driver] Error sending fader for channel ${channelIndex}:`, err);
-          return reject(err);
-        }
-        console.log(`[X32Driver] Sent volume ${levelPercent}% (=${normalized.toFixed(3)}) to channel ${channelIndex}`);
-        resolve();
-      });
+    this.client.on('message', (msg) => {
+      // Incoming OSC telemetry handling from physical console
     });
   }
 
   disconnect() {
-    if (!this.socket) {
-      console.log('[X32Driver] No socket to disconnect.');
-      this.connected = false;
-      return;
-    }
-    try {
-      this.socket.off('message', this._onMessage);
-      this.socket.off('error', this._onError);
-    } catch (e) {
-      // ignore if not supported
-    }
-
-    try {
-      if (typeof this.socket.disconnect === 'function') {
-        try { this.socket.disconnect(); } catch (e) {}
-      }
-      this.socket.close(() => {
-        console.log(`[X32Driver] Socket closed (was connected to ${this.ip}:${this.port}).`);
-      });
-    } catch (ex) {
-      console.error('[X32Driver] Error closing socket:', ex);
-    } finally {
-      this.socket = null;
-      this.connected = false;
-    }
+    if (this.keepAliveInterval) clearInterval(this.keepAliveInterval);
+    this.client.close();
+    console.log('[X32 Driver] Disconnected.');
   }
 
-  /**
-   * Build an OSC packet for X32 fader control.
-   * OSC Address: /ch/{channel}/mix/fader
-   * OSC Type: float (4 bytes, IEEE 754)
-   * @param {number} channelIndex - Channel number (0-based or 1-based depending on mixer)
-   * @param {number} normalizedValue - Float value between 0.0 and 1.0
-   * @returns {Buffer} Complete OSC packet
-   */
-  _buildOscFaderMessage(channelIndex, normalizedValue) {
-    // Construct OSC address pattern
-    const address = `/ch/${channelIndex}/mix/fader`;
-
-    // OSC message structure:
-    // - Address (null-terminated string, padded to 4-byte boundary)
-    // - Type tag string (null-terminated string, padded to 4-byte boundary)
-    // - Arguments (in order specified by type tag)
-
-    // Build address buffer
-    const addressBuf = Buffer.from(address, 'utf8');
-    const addressLen = addressBuf.length + 1; // +1 for null terminator
-    const addressPadded = addressLen + (4 - (addressLen % 4)) % 4; // Pad to 4-byte boundary
-    const addressBuffer = Buffer.alloc(addressPadded);
-    addressBuf.copy(addressBuffer);
-
-    // Build type tag buffer
-    const typeTag = ',f'; // Type tag: comma followed by 'f' for float
-    const typeTagBuf = Buffer.from(typeTag, 'utf8');
-    const typeTagLen = typeTagBuf.length + 1; // +1 for null terminator
-    const typeTagPadded = typeTagLen + (4 - (typeTagLen % 4)) % 4; // Pad to 4-byte boundary
-    const typeTagBuffer = Buffer.alloc(typeTagPadded);
-    typeTagBuf.copy(typeTagBuffer);
-
-    // Build float argument buffer (IEEE 754 single precision, big-endian)
-    const floatBuffer = Buffer.alloc(4);
-    floatBuffer.writeFloatBE(normalizedValue, 0);
-
-    // Concatenate all parts
-    const packet = Buffer.concat([addressBuffer, typeTagBuffer, floatBuffer]);
-    return packet;
+  // Set main input channel fader level (0.0 to 1.0)
+  setChannelLevel(channel, level) {
+    const chPadded = String(channel).padStart(2, '0');
+    const oscAddress = `/ch/${chPadded}/mix/fader`;
+    this.sendOSCFloat(oscAddress, Math.max(0.0, Math.min(1.0, level)));
   }
 
-  _onMessage(msg, rinfo) {
-    console.log(`[X32Driver] Received UDP message from ${rinfo.address}:${rinfo.port} - ${msg.length} bytes`);
-    const preview = msg.length > 200 ? msg.slice(0, 200) : msg;
-    try {
-      console.log(preview.toString('utf8'));
-    } catch (e) {
-      console.log('<binary data>');
-    }
+  // Set bus/aux send level for a channel (IEM Mixes)
+  setBusSendLevel(channel, bus, level) {
+    const chPadded = String(channel).padStart(2, '0');
+    const busPadded = String(bus).padStart(2, '0');
+    const oscAddress = `/ch/${chPadded}/mix/${busPadded}/level`;
+    this.sendOSCFloat(oscAddress, Math.max(0.0, Math.min(1.0, level)));
   }
 
-  _onError(err) {
-    console.error('[X32Driver] Socket error:', err);
+  // Set bus/aux send pan for spatial IEM positioning
+  setBusSendPan(channel, bus, pan) {
+    const chPadded = String(channel).padStart(2, '0');
+    const busPadded = String(bus).padStart(2, '0');
+    const oscAddress = `/ch/${chPadded}/mix/${busPadded}/pan`;
+    // Map -1.0..+1.0 pan to X32 float range 0.0..1.0
+    const normalizedPan = (pan + 1.0) / 2.0;
+    this.sendOSCFloat(oscAddress, Math.max(0.0, Math.min(1.0, normalizedPan)));
   }
 
-  /**
-   * Send a raw OSC packet.
-   * @param {Buffer|string} payload - OSC packet data
-   * @returns {Promise<void>}
-   */
-  sendRaw(payload) {
-    if (!this.connected || !this.socket) {
-      return Promise.reject(new Error('Not connected. Call connect() before sendRaw.'));
-    }
-    const buf = Buffer.isBuffer(payload) ? payload : Buffer.from(String(payload), 'utf8');
-    return new Promise((resolve, reject) => {
-      this.socket.send(buf, (err) => {
-        if (err) {
-          console.error('[X32Driver] Error sending raw payload:', err);
-          return reject(err);
-        }
-        console.log(`[X32Driver] Sent raw payload (${buf.length} bytes)`);
-        resolve();
-      });
-    });
+  // Basic OSC String Packet Builder
+  sendOSC(address) {
+    const buf = Buffer.from(this.padOSC(address) + ',s\0\0\0\0');
+    this.client.send(buf, 0, buf.length, this.port, this.ip);
+  }
+
+  // Basic OSC Float Packet Builder
+  sendOSCFloat(address, value) {
+    const addrBuf = Buffer.from(this.padOSC(address));
+    const typeBuf = Buffer.from(',f\0\0');
+    const valBuf = Buffer.alloc(4);
+    valBuf.writeFloatBE(value, 0);
+
+    const message = Buffer.concat([addrBuf, typeBuf, valBuf]);
+    this.client.send(message, 0, message.length, this.port, this.ip);
+  }
+
+  padOSC(str) {
+    const nulls = 4 - (str.length % 4);
+    return str + '\0'.repeat(nulls);
   }
 }
 
