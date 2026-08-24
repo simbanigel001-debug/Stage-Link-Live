@@ -89,12 +89,17 @@ function evaluateStageZone(x, y) {
   return { zone: 'Center Stage', status: 'GREEN' };
 }
 
-// Relay normalized telemetry from TrackingEngine to all connected clients
+// Relay normalized telemetry from TrackingEngine to hardware & connected clients
 trackingEngine.on('POSITION_UPDATE', (payload) => {
   const musician = musicians.find(m => m.id === payload.musicianId);
   if (musician) {
     const zoneInfo = evaluateStageZone(payload.coordinates.x, payload.coordinates.y);
     
+    // Compute spatial stereo pan from horizontal X stage coordinate (-1.0 Left to +1.0 Right)
+    const computedPan = payload.calculatedPan !== undefined 
+      ? payload.calculatedPan 
+      : parseFloat(((payload.coordinates.x - 50) / 50).toFixed(2));
+
     musician.stagePosition = {
       x: payload.coordinates.x,
       y: payload.coordinates.y,
@@ -102,12 +107,29 @@ trackingEngine.on('POSITION_UPDATE', (payload) => {
       status: zoneInfo.status
     };
 
-    // Broadcast Stage Intelligence telemetry to Front-End Interfaces
+    // Update in-memory mix state
+    if (musician.mix) {
+      musician.mix.pan = computedPan;
+    }
+
+    // 1. Send spatial pan update directly to physical mixer hardware bus/aux
+    if (activeMixer && typeof activeMixer.updateSpatialPan === 'function') {
+      activeMixer.updateSpatialPan(musician.id, musician.id, computedPan);
+    }
+
+    // 2. Broadcast Stage Intelligence telemetry to Engineer Dashboard
     io.emit('STAGE_INTELLIGENCE_UPDATE', {
       musicianId: musician.id,
       stagePosition: musician.stagePosition,
       accuracy: payload.accuracyMeters,
       provider: payload.providerType
+    });
+
+    // 3. Broadcast updated mix pan to Musician Mobile Client in real time
+    io.emit('mix_updated', {
+      musicianId: musician.id,
+      mix: musician.mix,
+      musicians
     });
   }
 });
@@ -149,12 +171,18 @@ io.on('connection', (socket) => {
     manualProvider.updateManualPosition(musicianId, x, y);
   });
 
-  // Listen for mix updates
+  // Listen for manual mix updates from front-end controls
   socket.on('update_mix', (data) => {
     const { musicianId, mixUpdate } = data;
     const musician = musicians.find(m => m.id === musicianId);
     if (musician) {
       musician.mix = { ...musician.mix, ...mixUpdate };
+
+      // Send manual pan overrides directly to physical mixer hardware
+      if (mixUpdate.pan !== undefined && activeMixer && typeof activeMixer.updateSpatialPan === 'function') {
+        activeMixer.updateSpatialPan(musician.id, musician.id, mixUpdate.pan);
+      }
+
       io.emit('mix_updated', { musicianId, mix: musician.mix, musicians });
     }
   });
