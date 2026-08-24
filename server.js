@@ -7,7 +7,7 @@ const path = require('path');
 
 // Import driver manager & tracking engine dependencies
 const MixerManager = require('./drivers/mixer-manager');
-const TrackingEngine = require('./tracking-engine');
+const TrackingEngine = require('./tracking/tracking-engine');
 const ManualProvider = require('./manual-provider');
 const UWBProvider = require('./tracking/uwb-provider');
 
