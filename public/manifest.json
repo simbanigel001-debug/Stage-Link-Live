@@ -1,0 +1,16 @@
+{
+  "name": "StageLink Live IEM",
+  "short_name": "StageLink",
+  "start_url": "/musician.html",
+  "display": "standalone",
+  "background_color": "#0b0f14",
+  "theme_color": "#0b0f14",
+  "icons": [
+    {
+      "src": "https://cdn-icons-png.flaticon.com/512/3659/3659738.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
