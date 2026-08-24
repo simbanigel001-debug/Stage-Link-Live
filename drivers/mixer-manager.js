@@ -6,11 +6,11 @@ const YamahaDriver = require('./yamaha-driver');
 
 class MixerManager {
   /**
-   * Create a MixerManager that can initialize and manage different mixer types.
+   * Create a MixerManager supporting X32/M32, StudioLive, and Yamaha consoles.
    * @param {Object} config - Configuration object
-   * @param {string} config.type - Mixer type: 'studiolive', 'x32', or 'yamaha'
+   * @param {string} config.type - Mixer type: 'x32', 'studiolive', or 'yamaha'
    * @param {string} config.ip - Mixer IP address
-   * @param {number} [config.port] - Mixer port
+   * @param {number} [config.port] - Mixer port (optional, falls back to default per driver)
    */
   constructor(config) {
     if (!config) {
@@ -20,13 +20,15 @@ class MixerManager {
       throw new Error('MixerManager config requires type and ip.');
     }
 
-    const validTypes = ['studiolive', 'x32', 'yamaha', 'cl', 'ql', 'tf'];
-    if (!validTypes.includes(config.type.toLowerCase())) {
-      throw new Error(`Invalid mixer type: ${config.type}. Must be one of: ${validTypes.join(', ')}`);
+    this.validTypes = ['studiolive', 'presonus', 'x32', 'm32', 'yamaha', 'cl', 'ql', 'tf'];
+    const normalizedType = config.type.toLowerCase();
+    
+    if (!this.validTypes.includes(normalizedType)) {
+      throw new Error(`Invalid mixer type: ${config.type}. Must be one of: ${this.validTypes.join(', ')}`);
     }
 
     this.config = config;
-    this.mixerType = config.type.toLowerCase();
+    this.mixerType = normalizedType;
     this.mixer = null;
     this.connected = false;
 
@@ -34,7 +36,7 @@ class MixerManager {
   }
 
   /**
-   * Initialize the appropriate mixer driver based on config type.
+   * Initialize the driver corresponding to this.mixerType
    * @private
    */
   _initializeMixer() {
@@ -44,27 +46,30 @@ class MixerManager {
       case 'studiolive':
       case 'presonus':
         this.mixer = new StudioLiveDriver(this.config.ip, port || 53000);
-        console.log(`[MixerManager] Initialized StudioLiveDriver for ${this.config.ip}:${port || 53000}`);
+        console.log(`[MixerManager] Initialized StudioLiveDriver (${this.config.ip}:${port || 53000})`);
         break;
+
       case 'x32':
       case 'm32':
         this.mixer = new X32Driver(this.config.ip, port || 10023);
-        console.log(`[MixerManager] Initialized X32Driver for ${this.config.ip}:${port || 10023}`);
+        console.log(`[MixerManager] Initialized X32Driver (${this.config.ip}:${port || 10023})`);
         break;
+
       case 'yamaha':
       case 'cl':
       case 'ql':
       case 'tf':
         this.mixer = new YamahaDriver({ ip: this.config.ip, port: port || 49280 });
-        console.log(`[MixerManager] Initialized YamahaDriver for ${this.config.ip}:${port || 49280}`);
+        console.log(`[MixerManager] Initialized YamahaDriver (${this.config.ip}:${port || 49280})`);
         break;
+
       default:
-        throw new Error(`Unsupported mixer type: ${this.mixerType}`);
+        throw new Error(`Unsupported mixer driver type: ${this.mixerType}`);
     }
   }
 
   /**
-   * Connect to the mixer device.
+   * Connect to the active hardware mixer instance.
    * @returns {Promise<void>}
    */
   async connect() {
@@ -74,9 +79,11 @@ class MixerManager {
     }
 
     try {
-      await this.mixer.connect();
+      if (typeof this.mixer.connect === 'function') {
+        await this.mixer.connect();
+      }
       this.connected = true;
-      console.log(`[MixerManager] Successfully connected to ${this.mixerType} mixer.`);
+      console.log(`[MixerManager] Successfully connected to ${this.mixerType} mixer at ${this.config.ip}.`);
     } catch (err) {
       console.error(`[MixerManager] Failed to connect to ${this.mixerType} mixer:`, err);
       throw err;
@@ -84,22 +91,33 @@ class MixerManager {
   }
 
   /**
-   * Switch protocol/driver on the fly.
-   * @param {string} type - Mixer type name ('x32', 'studiolive', 'yamaha')
+   * Dynamically switch mixer protocols at runtime.
+   * @param {string} newType - 'x32', 'studiolive', 'yamaha', etc.
+   * @param {string} [newIp] - Optional new IP address
+   * @param {number} [newPort] - Optional new Port
    */
-  async switchDriver(type) {
-    console.log(`[MixerManager] Switching protocol from ${this.mixerType} to ${type}...`);
+  async switchDriver(newType, newIp, newPort) {
+    const normalizedType = newType.toLowerCase();
+    if (!this.validTypes.includes(normalizedType)) {
+      throw new Error(`Cannot switch driver. Invalid mixer type: ${newType}`);
+    }
+
+    console.log(`[MixerManager] Switching protocol from ${this.mixerType} to ${normalizedType}...`);
+    
     this.disconnect();
-    this.config.type = type;
-    this.mixerType = type.toLowerCase();
+    this.config.type = normalizedType;
+    if (newIp) this.config.ip = newIp;
+    if (newPort) this.config.port = newPort;
+
+    this.mixerType = normalizedType;
     this._initializeMixer();
     await this.connect();
   }
 
   /**
-   * Update the volume level for a specific channel on the mixer.
-   * @param {number} channel - Channel index
-   * @param {number} level - Volume level (0-100% or float 0.0-1.0)
+   * Update channel volume level across all driver interfaces.
+   * @param {number} channel - Input Channel
+   * @param {number} level - Volume level (Supports 0-100% or 0.0-1.0 float)
    * @returns {Promise<void>}
    */
   async updateChannel(channel, level) {
@@ -111,16 +129,22 @@ class MixerManager {
       return Promise.reject(new Error('Channel must be a non-negative number.'));
     }
 
-    // Normalize level if passed as percentage (0-100) or float (0-1)
-    const normalizedLevel = level > 1 ? level / 100 : level;
+    if (!Number.isFinite(level) || level < 0) {
+      return Promise.reject(new Error('Level must be a non-negative number.'));
+    }
+
+    const normalizedFloat = level > 1 ? level / 100 : level;
+    const percentage = level <= 1 ? Math.round(level * 100) : level;
 
     try {
       if (typeof this.mixer.setChannelVolume === 'function') {
-        await this.mixer.setChannelVolume(channel, level);
+        // Accepts percentage (0-100)
+        await this.mixer.setChannelVolume(channel, percentage);
       } else if (typeof this.mixer.setChannelLevel === 'function') {
-        await this.mixer.setChannelLevel(channel, normalizedLevel);
+        // Accepts float (0.0-1.0)
+        await this.mixer.setChannelLevel(channel, normalizedFloat);
       }
-      console.log(`[MixerManager] Updated channel ${channel} level on ${this.mixerType} mixer.`);
+      console.log(`[MixerManager] Updated channel ${channel} level on ${this.mixerType}.`);
     } catch (err) {
       console.error(`[MixerManager] Error updating channel ${channel}:`, err);
       throw err;
@@ -131,7 +155,7 @@ class MixerManager {
    * Update spatial IEM bus send pan for a performer.
    * @param {number} channel - Input Channel
    * @param {number} bus - Target Aux/Bus pair
-   * @param {number} pan - Stereo Pan (-1.0 to +1.0)
+   * @param {number} pan - Stereo Pan (-1.0 Left to +1.0 Right)
    */
   async updateSpatialPan(channel, bus, pan) {
     if (!this.connected || !this.mixer) return;
@@ -139,59 +163,18 @@ class MixerManager {
     try {
       if (typeof this.mixer.setBusSendPan === 'function') {
         await this.mixer.setBusSendPan(channel, bus, pan);
+        console.log(`[MixerManager] Updated spatial pan for channel ${channel} -> Bus ${bus} (${pan}) on ${this.mixerType}.`);
+      } else {
+        console.warn(`[MixerManager] Driver '${this.mixerType}' does not implement setBusSendPan.`);
       }
     } catch (err) {
-      console.error(`[MixerManager] Error updating spatial pan for channel ${channel}:`, err);
+      console.error(`[MixerManager] Error setting spatial pan on ${this.mixerType}:`, err);
     }
   }
 
   /**
-   * Disconnect from the mixer device.
-   * @returns {void}
-   */
-  disconnect() {
-    if (!this.mixer) {
-      console.log('[MixerManager] No mixer to disconnect.');
-      this.connected = false;
-      return;
-    }
-
-    try {
-      this.mixer.disconnect();
-      this.connected = false;
-      console.log(`[MixerManager] Disconnected from ${this.mixerType} mixer.`);
-    } catch (err) {
-      console.error('[MixerManager] Error disconnecting:', err);
-    }
-  }
-
-  /**
-   * Get the current mixer type.
-   * @returns {string} The mixer type
-   */
-  getMixerType() {
-    return this.mixerType;
-  }
-
-  /**
-   * Get the connection status.
-   * @returns {boolean} True if connected, false otherwise
-   */
-  isConnected() {
-    return this.connected;
-  }
-
-  /**
-   * Get the underlying mixer instance.
-   * @returns {Object} The active mixer driver instance
-   */
-  getMixerInstance() {
-    return this.mixer;
-  }
-
-  /**
-   * Update multiple channels at once.
-   * @param {Array<{channel: number, level: number}>} updates - Array of channel updates
+   * Update multiple channels in parallel.
+   * @param {Array<{channel: number, level: number}>} updates
    * @returns {Promise<void>}
    */
   async updateChannels(updates) {
@@ -204,11 +187,44 @@ class MixerManager {
         this.updateChannel(update.channel, update.level)
       );
       await Promise.all(promises);
-      console.log(`[MixerManager] Updated ${updates.length} channels.`);
+      console.log(`[MixerManager] Updated ${updates.length} channels on ${this.mixerType}.`);
     } catch (err) {
       console.error('[MixerManager] Error updating multiple channels:', err);
       throw err;
     }
+  }
+
+  /**
+   * Disconnect the underlying mixer device.
+   */
+  disconnect() {
+    if (!this.mixer) {
+      console.log('[MixerManager] No mixer to disconnect.');
+      this.connected = false;
+      return;
+    }
+
+    try {
+      if (typeof this.mixer.disconnect === 'function') {
+        this.mixer.disconnect();
+      }
+      this.connected = false;
+      console.log(`[MixerManager] Disconnected from ${this.mixerType} mixer.`);
+    } catch (err) {
+      console.error('[MixerManager] Error disconnecting:', err);
+    }
+  }
+
+  getMixerType() {
+    return this.mixerType;
+  }
+
+  isConnected() {
+    return this.connected;
+  }
+
+  getMixerInstance() {
+    return this.mixer;
   }
 }
 
