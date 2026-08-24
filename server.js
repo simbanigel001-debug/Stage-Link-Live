@@ -5,8 +5,10 @@ const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
 
-// Import driver manager (assumes drivers/mixer-manager.js exists)
+// Import driver manager & tracking engine dependencies
 const MixerManager = require('./drivers/mixer-manager');
+const TrackingEngine = require('./tracking-engine');
+const ManualProvider = require('./manual-provider');
 
 // Initialize Express application
 const app = express();
@@ -23,44 +25,39 @@ app.use(cors());
 app.use(express.json());
 app.use(express.static('public'));
 
-// Initialize the active hardware mixer driver (defaulting to x32)
+// Initialize Active Hardware Mixer Driver
 const activeMixer = new MixerManager({ type: process.env.MIXER_TYPE || 'x32', ip: '192.168.1.100' });
 activeMixer.connect();
 
-// Mock data: Musicians with initial mix dictionaries
+// Initialize Stage Intelligence Spatial Engine
+const trackingEngine = new TrackingEngine();
+const manualProvider = new ManualProvider();
+
+trackingEngine.registerProvider('MANUAL', manualProvider);
+trackingEngine.setProvider('MANUAL');
+
+// Mock data: Musicians with Mix & Stage Intelligence Coordinates
 const musicians = [
   {
     id: 1,
     name: 'Drummer',
     instrument: 'drums',
-    mix: {
-      volume: 0.8,
-      pan: 0,
-      mute: false,
-      solo: false
-    }
+    mix: { volume: 0.8, pan: 0, mute: false, solo: false },
+    stagePosition: { x: 50, y: 20, zone: 'Center Stage', status: 'GREEN' }
   },
   {
     id: 2,
     name: 'Bassist',
     instrument: 'bass',
-    mix: {
-      volume: 0.75,
-      pan: -0.3,
-      mute: false,
-      solo: false
-    }
+    mix: { volume: 0.75, pan: -0.3, mute: false, solo: false },
+    stagePosition: { x: 20, y: 50, zone: 'Stage Left', status: 'GREEN' }
   },
   {
     id: 3,
     name: 'Vocalist',
     instrument: 'vocals',
-    mix: {
-      volume: 0.9,
-      pan: 0.2,
-      mute: false,
-      solo: false
-    }
+    mix: { volume: 0.9, pan: 0.2, mute: false, solo: false },
+    stagePosition: { x: 80, y: 50, zone: 'Stage Right', status: 'GREEN' }
   }
 ];
 
@@ -84,124 +81,125 @@ const audioChannels = [
   { id: 16, name: 'ambient', level: 0.3, muted: false }
 ];
 
-// GET endpoint to retrieve current state
-app.get('/api/state', (req, res) => {
-  res.json({
-    musicians,
-    audioChannels
-  });
+// Core Spatial Logic: Evaluate Stage Zone based on X/Y Coordinates
+function evaluateStageZone(x, y) {
+  if (x < 30) return { zone: 'Stage Left', status: 'GREEN' };
+  if (x > 70) return { zone: 'Stage Right', status: 'GREEN' };
+  if (y > 85) return { zone: 'Off Stage', status: 'BLUE' };
+  return { zone: 'Center Stage', status: 'GREEN' };
+}
+
+// Relay normalized telemetry from TrackingEngine to all connected clients
+trackingEngine.on('POSITION_UPDATE', (payload) => {
+  const musician = musicians.find(m => m.id === payload.musicianId);
+  if (musician) {
+    const zoneInfo = evaluateStageZone(payload.coordinates.x, payload.coordinates.y);
+    
+    musician.stagePosition = {
+      x: payload.coordinates.x,
+      y: payload.coordinates.y,
+      zone: zoneInfo.zone,
+      status: zoneInfo.status
+    };
+
+    // Broadcast Stage Intelligence telemetry to Front-End Interfaces
+    io.emit('STAGE_INTELLIGENCE_UPDATE', {
+      musicianId: musician.id,
+      stagePosition: musician.stagePosition,
+      accuracy: payload.accuracyMeters,
+      provider: payload.providerType
+    });
+  }
 });
 
-// POST endpoint to add a new musician
+// REST Endpoints
+app.get('/api/state', (req, res) => {
+  res.json({ musicians, audioChannels });
+});
+
 app.post('/api/musicians', (req, res) => {
   const { name, instrument } = req.body;
-
   if (!name || !instrument) {
-    return res.status(400).json({
-      error: 'Missing required fields: name and instrument'
-    });
+    return res.status(400).json({ error: 'Missing required fields: name and instrument' });
   }
 
   const newMusician = {
     id: musicians.length > 0 ? Math.max(...musicians.map(m => m.id)) + 1 : 1,
     name,
     instrument,
-    mix: {
-      volume: 0.5,
-      pan: 0,
-      mute: false,
-      solo: false
-    }
+    mix: { volume: 0.5, pan: 0, mute: false, solo: false },
+    stagePosition: { x: 50, y: 50, zone: 'Center Stage', status: 'GREEN' }
   };
 
   musicians.push(newMusician);
-
-  io.emit('state_update', {
-    musicians,
-    audioChannels
-  });
-
+  io.emit('state_update', { musicians, audioChannels });
   res.status(201).json(newMusician);
 });
 
-// Socket.io connection handling
+// Socket.IO Real-time Pipeline
 io.on('connection', (socket) => {
-  console.log(`Socket connected: ${socket.id}`);
+  console.log(`[Socket Connected] Client ID: ${socket.id}`);
 
-  // Send current state to newly connected client
-  socket.emit('initial_state', {
-    musicians,
-    audioChannels
+  // Send initial state on connection
+  socket.emit('initial_state', { musicians, audioChannels });
+
+  // Listen for Stage Intelligence Position Drag/Telemetry Events
+  socket.on('UPDATE_STAGE_POSITION', (data) => {
+    const { musicianId, x, y } = data;
+    manualProvider.updateManualPosition(musicianId, x, y);
   });
 
-  // Listen for mix update events
+  // Listen for mix updates
   socket.on('update_mix', (data) => {
     const { musicianId, mixUpdate } = data;
-
     const musician = musicians.find(m => m.id === musicianId);
     if (musician) {
-      musician.mix = {
-        ...musician.mix,
-        ...mixUpdate
-      };
-
-      io.emit('mix_updated', {
-        musicianId,
-        mix: musician.mix,
-        musicians
-      });
+      musician.mix = { ...musician.mix, ...mixUpdate };
+      io.emit('mix_updated', { musicianId, mix: musician.mix, musicians });
     }
   });
 
-  // Listen for hardware mixer brand switching
+  // Hardware Mixer Protocol Switching
   socket.on('set-mixer-type', (data) => {
     if (activeMixer && typeof activeMixer.switchDriver === 'function') {
       activeMixer.switchDriver(data.type);
-      console.log(`[Mixer Manager] Switched active hardware protocol to: ${data.type}`);
+      console.log(`[Mixer Manager] Protocol switched to: ${data.type}`);
     }
   });
 
-  // Listen for channel volume changes to push to the physical desk driver
   socket.on('update_channel_level', (data) => {
     if (activeMixer) {
       activeMixer.updateChannel(data.channel, data.level);
     }
   });
 
-  // Save current preset states to JSON
+  // Presets Management
   socket.on('save-preset', (data) => {
     const presetPath = path.join(__dirname, 'presets', `${data.name}.json`);
-    
     if (!fs.existsSync(path.dirname(presetPath))) {
       fs.mkdirSync(path.dirname(presetPath), { recursive: true });
     }
-
     fs.writeFileSync(presetPath, JSON.stringify(data.currentLevels, null, 2));
-    console.log(`[Presets] Saved preset: ${data.name}`);
     socket.emit('preset-saved', { success: true, name: data.name });
   });
 
-  // Load preset states from JSON
   socket.on('load-preset', (data) => {
     const presetPath = path.join(__dirname, 'presets', `${data.name}.json`);
-    
     if (fs.existsSync(presetPath)) {
       const presetData = JSON.parse(fs.readFileSync(presetPath, 'utf8'));
-      console.log(`[Presets] Loaded preset: ${data.name}`);
       io.emit('apply-preset', presetData);
     } else {
       socket.emit('error', { message: 'Preset not found' });
     }
   });
 
-  // Handle talkback audio streaming from engineer dashboard to musicians
+  // Audio Streaming / Talkback
   socket.on('talkback-audio-chunk', (audioChunk) => {
     socket.broadcast.emit('incoming-talkback', audioChunk);
   });
 
-  // Handle disconnect
   socket.on('disconnect', () => {
-    console.log(`Socket disconnected: ${socket.id}`);
+    console.log(`[Socket Disconnected] Client ID: ${socket.id}`);
   });
 });
 
@@ -211,7 +209,7 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: 'Internal Server Error' });
 });
 
-// Start server
+// Start Server
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   console.log(`StageLink Live server running on port ${PORT}`);
