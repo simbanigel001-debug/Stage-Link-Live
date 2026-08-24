@@ -292,7 +292,20 @@
         const res = await fetch('/api/state', {cache: 'no-store'});
         if (!res.ok) throw new Error('Network error');
         const data = await res.json();
-        musicians = data.musicians || [];
+        
+        // Auto-assign default stage position coordinates if missing from the server
+        musicians = (data.musicians || []).map((m, idx) => {
+          if (!m.stagePosition) {
+            m.stagePosition = {
+              x: 25 + ((idx * 20) % 50),
+              y: 50,
+              zone: 'Center Stage',
+              status: 'GREEN'
+            };
+          }
+          return m;
+        });
+
         updateConnection(true);
         renderMusicians();
         drawStage();
