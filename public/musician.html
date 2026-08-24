@@ -2,157 +2,245 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>StageLink Mobile - Musician Mix</title>
-  <!-- Tailwind CSS via CDN -->
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <title>StageLink Live - Personal IEM Mix</title>
   <script src="https://cdn.tailwindcss.com"></script>
-  <!-- Socket.IO client -->
   <script src="/socket.io/socket.io.js"></script>
   <style>
     :root { color-scheme: dark; }
-    body { background: linear-gradient(180deg,#0b0f14,#081018); }
-    .slider { -webkit-appearance: none; appearance: none; width: 100%; height: 8px; border-radius: 4px; background: rgba(255,255,255,0.1); outline: none; }
-    .slider::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 24px; height: 24px; border-radius: 50%; background: #10b981; cursor: pointer; }
-    .status-dot { width: 12px; height: 12px; border-radius: 999px; display: inline-block; box-shadow: 0 0 8px rgba(0,0,0,0.6); }
+    body { background: #0b0f14; touch-action: manipulation; }
+    /* Custom vertical touch-friendly range input styling */
+    input[type=range] {
+      accent-color: #10b981;
+    }
   </style>
 </head>
-<body class="text-gray-100 min-h-screen p-4 max-w-md mx-auto flex flex-col justify-between">
-  <div>
-    <!-- Header -->
-    <header class="flex items-center justify-between pb-4 border-b border-gray-800 mb-6">
-      <div>
-        <h1 class="text-lg font-bold">Musician <span class="text-xs font-normal text-gray-400">(Performer)</span></h1>
-        <p id="musician-id-display" class="text-xs text-gray-400">Loading ID...</p>
-      </div>
-      <div class="flex items-center space-x-2">
-        <span id="conn-dot" class="status-dot bg-red-600"></span>
-        <span id="conn-text" class="text-xs text-gray-300">Connecting...</span>
-      </div>
-    </header>
+<body class="text-gray-100 min-h-screen flex flex-col justify-between p-4 select-none">
 
-    <!-- Audio Unlock Overlay / Button (Mandatory for mobile browsers) -->
-    <div id="audio-unlock-banner" class="mb-6 p-4 bg-emerald-600/20 border border-emerald-500 rounded-lg text-center shadow-lg">
-      <p class="text-xs text-emerald-300 mb-2 font-medium">Mobile browser security requires interaction to enable live audio monitoring.</p>
-      <button id="unlock-audio-btn" class="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 text-black font-bold rounded-lg text-sm transition shadow">
-        🔊 Tap to Enable Monitor Audio
+  <!-- Header & Musician Identity -->
+  <header class="flex items-center justify-between border-b border-gray-800 pb-3">
+    <div>
+      <h1 id="musician-name" class="text-xl font-bold text-emerald-400">Loading Mix...</h1>
+      <p id="musician-inst" class="text-xs text-gray-400 uppercase tracking-widest">StageLink Live IEM</p>
+    </div>
+    <div class="flex items-center space-x-2 bg-gray-900 px-3 py-1.5 rounded-full border border-gray-800">
+      <span id="status-dot" class="w-2.5 h-2.5 rounded-full bg-red-500"></span>
+      <span id="status-text" class="text-xs text-gray-300 font-medium">Connecting</span>
+    </div>
+  </header>
+
+  <!-- Talkback Intercom Banner Indicator -->
+  <div id="talkback-banner" class="hidden my-2 p-3 bg-red-600/20 border border-red-500/50 rounded-lg flex items-center justify-between animate-pulse">
+    <div class="flex items-center space-x-2">
+      <span class="text-red-400 text-lg">📢</span>
+      <span class="text-xs font-semibold text-red-200">Engineer Talkback Active</span>
+    </div>
+    <span class="text-xxs uppercase tracking-wider bg-red-500 text-white font-bold px-2 py-0.5 rounded">Live</span>
+  </div>
+
+  <!-- Master & Personal Mix Controls -->
+  <main class="my-auto space-y-6 py-4">
+    
+    <!-- Master Volume Fader -->
+    <div class="bg-gray-900/80 p-5 rounded-xl border border-gray-800 space-y-3">
+      <div class="flex justify-between items-center">
+        <label for="master-vol" class="text-sm font-semibold uppercase tracking-wider text-gray-300">Master IEM Volume</label>
+        <span id="master-vol-disp" class="text-emerald-400 font-mono font-bold text-lg">80%</span>
+      </div>
+      <input id="master-vol" type="range" min="0" max="1" step="0.01" value="0.8" class="w-full h-3 bg-gray-800 rounded-lg appearance-none cursor-pointer" />
+    </div>
+
+    <!-- Spatial Stereo Pan Control -->
+    <div class="bg-gray-900/80 p-5 rounded-xl border border-gray-800 space-y-3">
+      <div class="flex justify-between items-center">
+        <label for="pan-control" class="text-sm font-semibold uppercase tracking-wider text-gray-300">Stereo Position (Pan)</label>
+        <span id="pan-disp" class="text-emerald-400 font-mono font-bold text-sm">Center</span>
+      </div>
+      <input id="pan-control" type="range" min="-1" max="1" step="0.05" value="0" class="w-full h-3 bg-gray-800 rounded-lg appearance-none cursor-pointer" />
+      <div class="flex justify-between text-xxs text-gray-500 font-bold uppercase tracking-wider">
+        <span>Left</span>
+        <span>Center</span>
+        <span>Right</span>
+      </div>
+    </div>
+
+    <!-- Quick Mute / Solo Toggles -->
+    <div class="grid grid-cols-2 gap-4">
+      <button id="btn-mute" class="py-4 bg-gray-900 border border-gray-800 text-gray-300 rounded-xl font-bold text-sm hover:bg-gray-800 active:scale-95 transition">
+        MUTE MIX
+      </button>
+      <button id="btn-solo" class="py-4 bg-gray-900 border border-gray-800 text-gray-300 rounded-xl font-bold text-sm hover:bg-gray-800 active:scale-95 transition">
+        SOLO
       </button>
     </div>
 
-    <!-- Talkback Alert Banner (Shows when engineer is speaking) -->
-    <div id="talkback-alert" class="hidden mb-4 p-3 bg-red-600/20 border border-red-500 rounded-lg text-red-400 text-center text-sm font-semibold animate-pulse">
-      🔴 ENGINEER TALKBACK ACTIVE
-    </div>
+  </main>
 
-    <!-- Personal Mix Controls -->
-    <main class="space-y-6">
-      <div class="flex items-center justify-between">
-        <h2 class="text-sm font-medium text-gray-300 uppercase tracking-wider">Personal Mix</h2>
-        <span class="text-xs text-gray-400">Adjust levels for your in-ear monitor</span>
-      </div>
-
-      <div id="mix-sliders" class="space-y-4">
-        <!-- Sliders injected dynamically -->
-      </div>
-    </main>
-  </div>
-
-  <!-- Hidden Audio Element for playing incoming stream chunks -->
-  <audio id="talkback-audio" style="display:none;"></audio>
-
-  <footer class="mt-8 pt-4 border-t border-gray-800 text-center text-xs text-gray-500">
-    StageLink Live Core &bull; Zero Latency Monitor
+  <!-- Footer Info -->
+  <footer class="text-center border-t border-gray-800 pt-3">
+    <p class="text-xxs text-gray-500">StageLink Live Core • Low-Latency IEM Engine</p>
   </footer>
 
   <script>
+    // Extract Musician ID from URL Query String (?id=1)
+    const urlParams = new URLSearchParams(window.location.search);
+    const musicianId = parseInt(urlParams.get('id'), 10);
+
+    // DOM Elements
+    const nameEl = document.getElementById('musician-name');
+    const instEl = document.getElementById('musician-inst');
+    const statusDot = document.getElementById('status-dot');
+    const statusText = document.getElementById('status-text');
+    const masterVol = document.getElementById('master-vol');
+    const masterVolDisp = document.getElementById('master-vol-disp');
+    const panControl = document.getElementById('pan-control');
+    const panDisp = document.getElementById('pan-disp');
+    const btnMute = document.getElementById('btn-mute');
+    const btnSolo = document.getElementById('btn-solo');
+    const talkbackBanner = document.getElementById('talkback-banner');
+
+    let currentMix = { volume: 0.8, pan: 0, mute: false, solo: false };
+
+    if (!musicianId) {
+      nameEl.textContent = 'Invalid ID';
+      instEl.textContent = 'Please scan a valid QR code';
+    }
+
+    // Connect Socket.IO
     const socket = io();
 
-    const urlParams = new URLSearchParams(window.location.search);
-    const musicianId = urlParams.get('id') || '1';
-    document.getElementById('musician-id-display').textContent = `ID: ${musicianId}`;
-
-    const connDot = document.getElementById('conn-dot');
-    const connText = document.getElementById('conn-text');
-    const mixSlidersContainer = document.getElementById('mix-sliders');
-    const talkbackAlert = document.getElementById('talkback-alert');
-    const unlockAudioBtn = document.getElementById('unlock-audio-btn');
-    const audioUnlockBanner = document.getElementById('audio-unlock-banner');
-    const talkbackAudio = document.getElementById('talkback-audio');
-
-    let audioUnlocked = false;
-
-    unlockAudioBtn.addEventListener('click', () => {
-      // Force play an empty sound or load state to unlock mobile audio context sandbox
-      talkbackAudio.play().catch(() => {});
-      audioUnlocked = true;
-      audioUnlockBanner.style.display = 'none';
-      console.log('Mobile audio successfully unlocked by user gesture.');
-    });
-
     socket.on('connect', () => {
-      connDot.classList.remove('bg-red-600');
-      connDot.classList.add('bg-emerald-500');
-      connText.textContent = 'Socket.io: Connected';
+      statusDot.className = 'w-2.5 h-2.5 rounded-full bg-emerald-500';
+      statusText.textContent = 'Live';
+      fetchState();
     });
 
     socket.on('disconnect', () => {
-      connDot.classList.remove('bg-emerald-500');
-      connDot.classList.add('bg-red-600');
-      connText.textContent = 'Disconnected';
+      statusDot.className = 'w-2.5 h-2.5 rounded-full bg-red-500';
+      statusText.textContent = 'Offline';
     });
 
-    // Receive initial state and build mix sliders
-    socket.on('initial_state', (data) => {
-      renderMixControls(data.audioChannels);
+    // Fetch Initial Musician Details & Mix
+    async function fetchState() {
+      if (!musicianId) return;
+      try {
+        const res = await fetch('/api/state');
+        const data = await res.json();
+        const me = (data.musicians || []).find(m => m.id === musicianId);
+        if (me) {
+          nameEl.textContent = me.name;
+          instEl.textContent = (me.instrument || 'Stage Performance').toUpperCase();
+          if (me.mix) {
+            currentMix = { ...me.mix };
+            updateUI();
+          }
+        } else {
+          nameEl.textContent = 'Musician Not Found';
+        }
+      } catch (err) {
+        console.error('State sync error:', err);
+      }
+    }
+
+    // Update Local Controls UI
+    function updateUI() {
+      masterVol.value = currentMix.volume;
+      masterVolDisp.textContent = `${Math.round(currentMix.volume * 100)}%`;
+
+      panControl.value = currentMix.pan;
+      if (currentMix.pan === 0) panDisp.textContent = 'Center';
+      else if (currentMix.pan < 0) panDisp.textContent = `${Math.abs(Math.round(currentMix.pan * 100))}% Left`;
+      else panDisp.textContent = `${Math.round(currentMix.pan * 100)}% Right`;
+
+      // Mute state
+      if (currentMix.mute) {
+        btnMute.className = 'py-4 bg-red-600 border border-red-500 text-white rounded-xl font-bold text-sm active:scale-95 transition';
+        btnMute.textContent = 'MUTED';
+      } else {
+        btnMute.className = 'py-4 bg-gray-900 border border-gray-800 text-gray-300 rounded-xl font-bold text-sm hover:bg-gray-800 active:scale-95 transition';
+        btnMute.textContent = 'MUTE MIX';
+      }
+
+      // Solo state
+      if (currentMix.solo) {
+        btnSolo.className = 'py-4 bg-amber-500 border border-amber-400 text-black rounded-xl font-bold text-sm active:scale-95 transition';
+        btnSolo.textContent = 'SOLO ACTIVE';
+      } else {
+        btnSolo.className = 'py-4 bg-gray-900 border border-gray-800 text-gray-300 rounded-xl font-bold text-sm hover:bg-gray-800 active:scale-95 transition';
+        btnSolo.textContent = 'SOLO';
+      }
+    }
+
+    // Event Listeners for Controls
+    masterVol.addEventListener('input', (e) => {
+      currentMix.volume = parseFloat(e.target.value);
+      updateUI();
+      emitMixUpdate();
     });
 
-    function renderMixControls(channels) {
-      mixSlidersContainer.innerHTML = '';
-      channels.forEach((ch) => {
-        const row = document.createElement('div');
-        row.className = 'bg-gray-900/40 p-4 rounded-lg border border-gray-800 space-y-2';
-        row.innerHTML = `
-          <div class="flex justify-between items-center text-sm">
-            <span class="font-medium capitalize">${ch.name}</span>
-            <span id="val-${ch.id}" class="text-xs text-gray-400">50%</span>
-          </div>
-          <input type="range" min="0" max="100" value="50" class="slider" data-channel-id="${ch.id}" />
-        `;
-        mixSlidersContainer.appendChild(row);
+    panControl.addEventListener('input', (e) => {
+      currentMix.pan = parseFloat(e.target.value);
+      updateUI();
+      emitMixUpdate();
+    });
 
-        const slider = row.querySelector('input');
-        slider.addEventListener('input', (e) => {
-          const val = e.target.value;
-          document.getElementById(`val-${ch.id}`).textContent = `${val}%`;
-          socket.emit('update_mix', {
-            musicianId: musicianId,
-            mixUpdate: { [ch.name]: val / 100 }
-          });
-        });
+    btnMute.addEventListener('click', () => {
+      currentMix.mute = !currentMix.mute;
+      updateUI();
+      emitMixUpdate();
+    });
+
+    btnSolo.addEventListener('click', () => {
+      currentMix.solo = !currentMix.solo;
+      updateUI();
+      emitMixUpdate();
+    });
+
+    function emitMixUpdate() {
+      if (!musicianId) return;
+      socket.emit('update_mix', {
+        musicianId: musicianId,
+        mixUpdate: currentMix
       });
     }
 
-    // Direct Blob Audio Chunk Queue Streaming
-    socket.on('incoming-talkback', (audioChunk) => {
-      if (!audioUnlocked) return; // Ignore if user hasn't tapped unlock yet
+    // Real-Time Syncing when Foh/Engineer alters mix
+    socket.on('mix_updated', (data) => {
+      if (data.musicianId === musicianId && data.mix) {
+        currentMix = { ...data.mix };
+        updateUI();
+      }
+    });
 
-      talkbackAlert.classList.remove('hidden');
+    // Web Audio Intercom Stream Decoding for Talkback
+    let audioCtx = null;
+    let talkbackTimeout = null;
+
+    socket.on('incoming-talkback', async (arrayBuffer) => {
+      // Show incoming audio banner
+      talkbackBanner.classList.remove('hidden');
+      clearTimeout(talkbackTimeout);
+      talkbackTimeout = setTimeout(() => {
+        talkbackBanner.classList.add('hidden');
+      }, 1000);
 
       try {
-        const blob = new Blob([audioChunk], { type: 'audio/webm' });
-        const audioUrl = URL.createObjectURL(blob);
-        
-        talkbackAudio.src = audioUrl;
-        talkbackAudio.play().catch(err => {
-          console.warn('Playback error:', err);
-        });
-      } catch (err) {
-        console.error('Error handling talkback chunk:', err);
-      }
+        if (!audioCtx) {
+          audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        if (audioCtx.state === 'suspended') {
+          await audioCtx.resume();
+        }
 
-      clearTimeout(window.talkbackTimeout);
-      window.talkbackTimeout = setTimeout(() => {
-        talkbackAlert.classList.add('hidden');
-      }, 500);
+        const decodedData = await audioCtx.decodeAudioData(arrayBuffer.slice(0));
+        const source = audioCtx.createBufferSource();
+        source.buffer = decodedData;
+        source.connect(audioCtx.destination);
+        source.start(0);
+      } catch (e) {
+        // Log playback errors (e.g. user interaction requirements prior to audio playback)
+        console.warn('Audio streaming buffer playback pending user tap.', e);
+      }
     });
   </script>
 </body>
