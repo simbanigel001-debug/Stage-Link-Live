@@ -9,6 +9,7 @@ const path = require('path');
 const MixerManager = require('./drivers/mixer-manager');
 const TrackingEngine = require('./tracking-engine');
 const ManualProvider = require('./manual-provider');
+const UWBProvider = require('./tracking/uwb-provider');
 
 // Initialize Express application
 const app = express();
@@ -29,12 +30,27 @@ app.use(express.static('public'));
 const activeMixer = new MixerManager({ type: process.env.MIXER_TYPE || 'x32', ip: '192.168.1.100' });
 activeMixer.connect();
 
-// Initialize Stage Intelligence Spatial Engine
+// Initialize Stage Intelligence Spatial Engine & Tracking Providers
 const trackingEngine = new TrackingEngine();
 const manualProvider = new ManualProvider();
+const uwbProvider = new UWBProvider({ port: 8080, stageWidth: 20, stageHeight: 15 });
 
+// Map UWB Hardware Tags to Musician IDs
+uwbProvider.mapTagToMusician('TAG_01', 1); // Drummer
+uwbProvider.mapTagToMusician('TAG_02', 2); // Bassist
+uwbProvider.mapTagToMusician('TAG_03', 3); // Vocalist
+
+// Register Providers
 trackingEngine.registerProvider('MANUAL', manualProvider);
-trackingEngine.setProvider('MANUAL');
+trackingEngine.registerProvider('UWB', uwbProvider);
+
+// Set Active Provider from environment (default: MANUAL)
+const activeProvider = process.env.TRACKING_MODE || 'MANUAL';
+trackingEngine.setProvider(activeProvider);
+
+if (activeProvider === 'UWB') {
+  uwbProvider.start();
+}
 
 // Mock data: Musicians with Mix & Stage Intelligence Coordinates
 const musicians = [
@@ -136,7 +152,7 @@ trackingEngine.on('POSITION_UPDATE', (payload) => {
 
 // REST Endpoints
 app.get('/api/state', (req, res) => {
-  res.json({ musicians, audioChannels });
+  res.json({ musicians, audioChannels, trackingProvider: trackingEngine.activeProviderKey });
 });
 
 app.post('/api/musicians', (req, res) => {
@@ -163,7 +179,28 @@ io.on('connection', (socket) => {
   console.log(`[Socket Connected] Client ID: ${socket.id}`);
 
   // Send initial state on connection
-  socket.emit('initial_state', { musicians, audioChannels });
+  socket.emit('initial_state', { 
+    musicians, 
+    audioChannels,
+    trackingProvider: trackingEngine.activeProviderKey 
+  });
+
+  // Dynamic Provider Switching ('MANUAL' vs 'UWB')
+  socket.on('SET_TRACKING_PROVIDER', (data) => {
+    const { provider } = data;
+    try {
+      if (provider === 'UWB') {
+        uwbProvider.start();
+      } else if (provider === 'MANUAL') {
+        uwbProvider.stop();
+      }
+      trackingEngine.setProvider(provider);
+      io.emit('TRACKING_PROVIDER_CHANGED', { activeProvider: provider });
+      console.log(`[TrackingEngine] Provider switched to: ${provider}`);
+    } catch (err) {
+      socket.emit('error', { message: err.message });
+    }
+  });
 
   // Listen for Stage Intelligence Position Drag/Telemetry Events
   socket.on('UPDATE_STAGE_POSITION', (data) => {
@@ -190,7 +227,7 @@ io.on('connection', (socket) => {
   // Hardware Mixer Protocol Switching
   socket.on('set-mixer-type', (data) => {
     if (activeMixer && typeof activeMixer.switchDriver === 'function') {
-      activeMixer.switchDriver(data.type);
+      activeMixer.switchDriver(data.type, data.ip, data.port);
       console.log(`[Mixer Manager] Protocol switched to: ${data.type}`);
     }
   });
@@ -242,4 +279,5 @@ const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   console.log(`StageLink Live server running on port ${PORT}`);
   console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`Active Tracking Provider: ${trackingEngine.activeProviderKey}`);
 });
