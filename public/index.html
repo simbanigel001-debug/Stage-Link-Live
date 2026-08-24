@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>StageLink Live Core - Engineer Dashboard</title>
+  <title>StageLink Live Core - Engineer Dashboard & Stage Intelligence</title>
   <!-- Tailwind CSS via CDN -->
   <script src="https://cdn.tailwindcss.com"></script>
   <!-- QR code generator -->
@@ -11,12 +11,15 @@
   <!-- Socket.IO client -->
   <script src="/socket.io/socket.io.js"></script>
   <style>
-    /* Small customizations for a darker live-sound friendly look */
     :root { color-scheme: dark; }
     body { background: linear-gradient(180deg,#0b0f14,#081018); }
     .meter { height: 10px; background: rgba(255,255,255,0.06); border-radius: 999px; overflow: hidden; }
     .meter > .level { height: 100%; background: linear-gradient(90deg,#10b981,#f59e0b,#ef4444); width: 0%; transition: width 120ms linear; }
     .status-dot { width: 12px; height: 12px; border-radius: 999px; display: inline-block; box-shadow: 0 0 8px rgba(0,0,0,0.6); }
+    
+    /* Stage Intelligence Workspace Styling */
+    .canvas-wrapper { position: relative; width: 100%; height: 380px; background: #0c0e14; border-radius: 8px; border: 1px solid #374151; overflow: hidden; }
+    canvas { width: 100%; height: 100%; cursor: crosshair; }
   </style>
 </head>
 <body class="text-gray-100 min-h-screen">
@@ -25,7 +28,7 @@
     <header class="flex flex-col md:flex-row items-center justify-between gap-4">
       <div>
         <h1 class="text-2xl font-semibold">StageLink Live Core - Engineer Dashboard</h1>
-        <p class="text-sm text-gray-400">Monitor and manage active musicians and channel inputs</p>
+        <p class="text-sm text-gray-400">Monitor mixer status, talkback intercom, and real-time stage positioning</p>
       </div>
       <div class="flex flex-wrap items-center gap-3">
         <!-- Mixer Type Selector -->
@@ -59,7 +62,58 @@
       </div>
     </header>
 
-    <main class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+    <!-- Navigation Tabs -->
+    <div class="flex border-b border-gray-700 space-x-4">
+      <button id="tab-dashboard-btn" class="py-2 px-4 text-emerald-400 border-b-2 border-emerald-400 font-medium text-sm focus:outline-none">Dashboard Overview</button>
+      <button id="tab-stage-btn" class="py-2 px-4 text-gray-400 hover:text-gray-200 font-medium text-sm focus:outline-none">Stage Intelligence Workspace 📍</button>
+    </div>
+
+    <!-- VIEW 1: STAGE INTELLIGENCE WORKSPACE -->
+    <div id="view-stage-intelligence" class="hidden grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div class="lg:col-span-2 bg-gray-800/60 p-4 rounded-lg border border-gray-700 flex flex-col space-y-3">
+        <div class="flex items-center justify-between">
+          <h2 class="text-lg font-medium text-emerald-400">Interactive Stage Map</h2>
+          <span class="text-xs text-gray-400 bg-gray-900 px-2 py-1 rounded border border-gray-700">Mode: <strong>Manual Drag (V1)</strong></span>
+        </div>
+        <div class="canvas-wrapper" id="canvas-wrapper">
+          <canvas id="stageCanvas"></canvas>
+        </div>
+      </div>
+
+      <!-- Inspector Sidebar Card -->
+      <div class="lg:col-span-1 bg-gray-800/60 p-4 rounded-lg border border-gray-700 flex flex-col justify-between">
+        <div>
+          <h2 class="text-xs font-bold uppercase tracking-wider text-gray-400 mb-2">Stage Intelligence Inspector</h2>
+          <div id="selected-musician-card" class="bg-gray-900/80 p-4 rounded border border-gray-700 space-y-3">
+            <div id="disp-name" class="text-xl font-bold text-white">Select Musician</div>
+            <div id="disp-inst" class="text-xs font-semibold text-cyan-400 uppercase tracking-wide">Click an avatar on the stage map</div>
+            
+            <div class="grid grid-cols-2 gap-2 text-xs pt-2">
+              <div class="bg-gray-800 p-2 rounded border border-gray-700">
+                <span class="text-gray-400 block">Position</span>
+                <span id="disp-zone" class="font-semibold text-gray-200">--</span>
+              </div>
+              <div class="bg-gray-800 p-2 rounded border border-gray-700">
+                <span class="text-gray-400 block">Status</span>
+                <span id="disp-status" class="font-semibold text-gray-200">--</span>
+              </div>
+              <div class="bg-gray-800 p-2 rounded border border-gray-700">
+                <span class="text-gray-400 block">Mix Vol</span>
+                <span id="disp-volume" class="font-semibold text-gray-200">--</span>
+              </div>
+              <div class="bg-gray-800 p-2 rounded border border-gray-700">
+                <span class="text-gray-400 block">Pan</span>
+                <span id="disp-pan" class="font-semibold text-gray-200">--</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <p class="text-xs text-gray-400 mt-4">Drag any musician's icon across the stage to dynamically update positions across all connected StageLink clients.</p>
+      </div>
+    </div>
+
+    <!-- VIEW 2: CORE DASHBOARD OVERVIEW -->
+    <main id="view-dashboard" class="grid grid-cols-1 lg:grid-cols-3 gap-6">
       <!-- Create Musician -->
       <section class="lg:col-span-1 bg-gray-800/60 p-4 rounded-lg border border-gray-700">
         <h2 class="text-lg font-medium mb-3">Add New Musician</h2>
@@ -117,6 +171,27 @@
     // Initialize Socket.IO connection
     const socket = io();
 
+    // Tab Navigation Logic
+    const tabDashboardBtn = document.getElementById('tab-dashboard-btn');
+    const tabStageBtn = document.getElementById('tab-stage-btn');
+    const viewDashboard = document.getElementById('view-dashboard');
+    const viewStageIntelligence = document.getElementById('view-stage-intelligence');
+
+    tabDashboardBtn.addEventListener('click', () => {
+      viewDashboard.classList.remove('hidden');
+      viewStageIntelligence.classList.add('hidden');
+      tabDashboardBtn.className = 'py-2 px-4 text-emerald-400 border-b-2 border-emerald-400 font-medium text-sm focus:outline-none';
+      tabStageBtn.className = 'py-2 px-4 text-gray-400 hover:text-gray-200 font-medium text-sm focus:outline-none';
+    });
+
+    tabStageBtn.addEventListener('click', () => {
+      viewDashboard.classList.add('hidden');
+      viewStageIntelligence.classList.remove('hidden');
+      tabStageBtn.className = 'py-2 px-4 text-emerald-400 border-b-2 border-emerald-400 font-medium text-sm focus:outline-none';
+      tabDashboardBtn.className = 'py-2 px-4 text-gray-400 hover:text-gray-200 font-medium text-sm focus:outline-none';
+      resizeCanvas();
+    });
+
     // Mixer type selector
     const mixerSelect = document.getElementById('mixer-select');
     mixerSelect.addEventListener('change', (e) => {
@@ -153,16 +228,14 @@
     });
 
     socket.on('preset-saved', (data) => {
-      console.log('Preset saved successfully:', data.name);
       alert(`Preset "${data.name}" saved successfully!`);
     });
 
     socket.on('apply-preset', (presetData) => {
-      console.log('Preset applied across dashboard view:', presetData);
       alert('Preset loaded successfully!');
     });
 
-    // Talkback Audio Streaming Logic
+    // Talkback Intercom Stream
     let localStream = null;
     let mediaRecorder = null;
     const talkbackBtn = document.getElementById('talkback-btn');
@@ -170,31 +243,19 @@
     talkbackBtn.addEventListener('mousedown', async () => {
       try {
         localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        
-        // Ensure browser compatibility for recorded audio chunks
         const options = { mimeType: 'audio/webm;codecs=opus' };
-        if (!MediaRecorder.isTypeSupported(options.mimeType)) {
-          options.mimeType = 'audio/mp4';
-          if (!MediaRecorder.isTypeSupported(options.mimeType)) {
-            options.mimeType = ''; 
-          }
-        }
+        if (!MediaRecorder.isTypeSupported(options.mimeType)) options.mimeType = '';
 
         mediaRecorder = new MediaRecorder(localStream, options);
-        
         mediaRecorder.ondataavailable = (event) => {
-          if (event.data.size > 0) {
-            socket.emit('talkback-audio-chunk', event.data);
-          }
+          if (event.data.size > 0) socket.emit('talkback-audio-chunk', event.data);
         };
 
         mediaRecorder.start(250);
         talkbackBtn.classList.remove('bg-red-600', 'hover:bg-red-500');
         talkbackBtn.classList.add('bg-green-600', 'hover:bg-green-500');
         talkbackBtn.textContent = '🎤 Transmitting...';
-        console.log('[Talkback] Transmission started');
       } catch (err) {
-        console.error('[Talkback] Error accessing microphone:', err);
         alert('Could not access microphone for talkback.');
       }
     });
@@ -202,27 +263,18 @@
     window.addEventListener('mouseup', () => {
       if (mediaRecorder && mediaRecorder.state !== 'inactive') {
         mediaRecorder.stop();
-        if (localStream) {
-          localStream.getTracks().forEach(track => track.stop());
-        }
+        if (localStream) localStream.getTracks().forEach(track => track.stop());
         talkbackBtn.classList.remove('bg-green-600', 'hover:bg-green-500');
         talkbackBtn.classList.add('bg-red-600', 'hover:bg-red-500');
         talkbackBtn.textContent = '🎤 Hold to Talk';
-        console.log('[Talkback] Transmission stopped');
       }
     });
 
-    // Utility to slugify names for placeholder links
-    function slugify(text) {
-      return text.toString().toLowerCase().replace(/\s+/g,'-').replace(/[^a-z0-9-_]/g,'');
-    }
-
     // State
     let musicians = [];
-    const channels = [
-      'Kick','Snare','Hi-Hat','Tom 1','Tom 2','Floor Tom','OH L','OH R',
-      'Bass','Guitar','Keys','Lead Vocal','Backing 1','Backing 2','FX','Aux'
-    ];
+    let selectedMusicianId = null;
+    let isDragging = false;
+    const channels = ['Kick','Snare','Hi-Hat','Tom 1','Tom 2','Floor Tom','OH L','OH R','Bass','Guitar','Keys','Lead Vocal','Backing 1','Backing 2','FX','Aux'];
 
     // DOM refs
     const connDot = document.getElementById('conn-dot');
@@ -238,13 +290,13 @@
     async function fetchState(force=false) {
       try {
         const res = await fetch('/api/state', {cache: 'no-store'});
-        if (!res.ok) throw new Error('Network response not ok');
+        if (!res.ok) throw new Error('Network error');
         const data = await res.json();
         musicians = data.musicians || [];
         updateConnection(true);
         renderMusicians();
+        drawStage();
       } catch (err) {
-        console.warn('Failed to fetch state', err);
         updateConnection(false);
       }
     }
@@ -265,11 +317,7 @@
       e.preventDefault();
       const name = document.getElementById('musician-name').value.trim();
       const instrument = document.getElementById('musician-instrument').value;
-      if (!name) {
-        formMsg.textContent = 'Name is required.';
-        return;
-      }
-      formMsg.textContent = 'Creating...';
+      if (!name) return;
       try {
         const res = await fetch('/api/musicians', {
           method: 'POST',
@@ -277,13 +325,9 @@
           body: JSON.stringify({ name, instrument })
         });
         if (!res.ok) throw new Error('Create failed');
-        const created = await res.json();
-        formMsg.textContent = 'Musician created.';
         await fetchState(true);
         form.reset();
-        setTimeout(()=>formMsg.textContent='',2000);
       } catch (err) {
-        console.error(err);
         formMsg.textContent = 'Failed to create musician.';
       }
     });
@@ -294,7 +338,7 @@
       musicianCount.textContent = `${musicians.length} active`;
 
       musicians.forEach((m, idx) => {
-        const id = m.id || slugify(m.name || ('musician-'+idx));
+        const id = m.id || ('musician-'+idx);
         const card = document.createElement('div');
         card.className = 'bg-gray-900/50 p-3 rounded border border-gray-700 flex flex-col items-stretch';
         card.innerHTML = `
@@ -306,11 +350,9 @@
             <div class="text-xs text-gray-400">ID: ${escapeHtml(String(id))}</div>
           </div>
           <div class="flex items-center space-x-3">
-            <div class="qr-target w-28 h-28 bg-gray-800/30 rounded flex items-center justify-center" data-musician-id="${escapeHtml(String(id))}">
-              <div class="text-xs text-gray-500">Generating QR...</div>
-            </div>
+            <div class="qr-target w-24 h-24 bg-gray-800/30 rounded flex items-center justify-center" data-musician-id="${escapeHtml(String(id))}"></div>
             <div class="flex-1 text-xs text-gray-300">
-              <div class="mb-2">Scan to join personal mix</div>
+              <div class="mb-1">Scan for mix</div>
               <div class="text-xxs break-all text-gray-400">${escapeHtml(generateMixUrl(id))}</div>
             </div>
           </div>
@@ -321,29 +363,18 @@
         const url = generateMixUrl(id);
         if (window.QRCode && qrEl) {
           const canvas = document.createElement('canvas');
-          canvas.width = 160; canvas.height = 160;
-          qrEl.innerHTML = '';
           qrEl.appendChild(canvas);
-          QRCode.toCanvas(canvas, url, { width: 160 }, function (error) {
-            if (error) {
-              qrEl.innerHTML = '<div class="text-xs text-gray-500">QR failed</div>';
-            }
-          });
-        } else {
-          if (qrEl) qrEl.innerHTML = '<div class="text-xs text-gray-500">Scan URL</div>';
+          QRCode.toCanvas(canvas, url, { width: 96 }, function () {});
         }
       });
     }
 
     function escapeHtml(s) {
-      return String(s || '').replace(/[&<>\"']/g, function(c){
-        return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
-      });
+      return String(s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
     }
 
     function generateMixUrl(id) {
-      const base = window.location.origin;
-      return `${base}/musician.html?id=${encodeURIComponent(id)}`;
+      return `${window.location.origin}/musician.html?id=${encodeURIComponent(id)}`;
     }
 
     const channelsContainer = document.getElementById('channels');
@@ -372,11 +403,136 @@
         if (levelEl) levelEl.style.width = `${peak}%`;
         if (led) {
           led.textContent = `${peak}%`;
-          if (peak > 80) led.className = 'text-red-400';
-          else if (peak > 50) led.className = 'text-amber-400';
-          else led.className = 'text-green-400';
+          led.className = peak > 80 ? 'text-red-400' : (peak > 50 ? 'text-amber-400' : 'text-green-400');
         }
       });
+    }
+
+    // Interactive Stage Intelligence Canvas Logic
+    const canvas = document.getElementById('stageCanvas');
+    const ctx = canvas.getContext('2d');
+    const wrapper = document.getElementById('canvas-wrapper');
+
+    function resizeCanvas() {
+      if (!canvas || !wrapper) return;
+      canvas.width = wrapper.clientWidth;
+      canvas.height = wrapper.clientHeight;
+      drawStage();
+    }
+    window.addEventListener('resize', resizeCanvas);
+
+    socket.on('STAGE_INTELLIGENCE_UPDATE', (data) => {
+      const musician = musicians.find(m => m.id === data.musicianId);
+      if (musician) {
+        musician.stagePosition = data.stagePosition;
+        drawStage();
+        if (selectedMusicianId === musician.id) updateInspector(musician);
+      }
+    });
+
+    function drawStage() {
+      if (!ctx) return;
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      // Grid Guidelines
+      ctx.strokeStyle = '#374151';
+      ctx.setLineDash([4, 4]);
+      
+      // Stage Left / Center / Right Divide Lines
+      ctx.beginPath();
+      ctx.moveTo(canvas.width * 0.3, 0); ctx.lineTo(canvas.width * 0.3, canvas.height);
+      ctx.moveTo(canvas.width * 0.7, 0); ctx.lineTo(canvas.width * 0.7, canvas.height);
+      ctx.stroke();
+
+      // Audience Boundary
+      ctx.beginPath();
+      ctx.moveTo(0, canvas.height * 0.85); ctx.lineTo(canvas.width, canvas.height * 0.85);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // Zone Labels
+      ctx.fillStyle = '#6b7280';
+      ctx.font = '11px sans-serif';
+      ctx.fillText('STAGE LEFT', 10, 20);
+      ctx.fillText('CENTER STAGE', canvas.width * 0.43, 20);
+      ctx.fillText('STAGE RIGHT', canvas.width * 0.82, 20);
+      ctx.fillText('AUDIENCE / OFF STAGE', 10, canvas.height - 10);
+
+      // Render Musician Avatars
+      musicians.forEach(m => {
+        if (!m.stagePosition) return;
+
+        const posX = (m.stagePosition.x / 100) * canvas.width;
+        const posY = (m.stagePosition.y / 100) * canvas.height;
+        const isSelected = m.id === selectedMusicianId;
+
+        if (isSelected) {
+          ctx.beginPath();
+          ctx.arc(posX, posY, 24, 0, Math.PI * 2);
+          ctx.fillStyle = 'rgba(16, 185, 129, 0.2)';
+          ctx.fill();
+          ctx.strokeStyle = '#10b981';
+          ctx.lineWidth = 2;
+          ctx.stroke();
+        }
+
+        ctx.beginPath();
+        ctx.arc(posX, posY, 16, 0, Math.PI * 2);
+        ctx.fillStyle = m.stagePosition.status === 'BLUE' ? '#06b6d4' : '#10b981';
+        ctx.fill();
+
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 11px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(m.name, posX, posY + 28);
+      });
+    }
+
+    function getMousePos(evt) {
+      const rect = canvas.getBoundingClientRect();
+      return {
+        x: ((evt.clientX - rect.left) / canvas.width) * 100,
+        y: ((evt.clientY - rect.top) / canvas.height) * 100
+      };
+    }
+
+    canvas.addEventListener('mousedown', (e) => {
+      const pos = getMousePos(e);
+      const clicked = musicians.find(m => {
+        if (!m.stagePosition) return false;
+        const dx = m.stagePosition.x - pos.x;
+        const dy = m.stagePosition.y - pos.y;
+        return Math.sqrt(dx * dx + dy * dy) < 8;
+      });
+
+      if (clicked) {
+        selectedMusicianId = clicked.id;
+        isDragging = true;
+        updateInspector(clicked);
+        drawStage();
+      }
+    });
+
+    canvas.addEventListener('mousemove', (e) => {
+      if (isDragging && selectedMusicianId) {
+        const pos = getMousePos(e);
+        socket.emit('UPDATE_STAGE_POSITION', {
+          musicianId: selectedMusicianId,
+          x: Math.min(Math.max(pos.x, 2), 98),
+          y: Math.min(Math.max(pos.y, 2), 98)
+        });
+      }
+    });
+
+    window.addEventListener('mouseup', () => { isDragging = false; });
+
+    function updateInspector(m) {
+      document.getElementById('disp-name').innerText = m.name;
+      document.getElementById('disp-inst').innerText = (m.instrument || 'OTHER').toUpperCase();
+      document.getElementById('disp-zone').innerText = m.stagePosition ? m.stagePosition.zone : '--';
+      document.getElementById('disp-status').innerText = m.stagePosition ? m.stagePosition.status : '--';
+      document.getElementById('disp-volume').innerText = m.mix ? `${Math.round((m.mix.volume || 0) * 100)}%` : '--';
+      document.getElementById('disp-pan').innerText = m.mix ? (m.mix.pan === 0 ? 'Center' : `${m.mix.pan}`) : '--';
     }
 
     (function init(){
