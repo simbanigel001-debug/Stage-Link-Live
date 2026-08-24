@@ -1,34 +1,29 @@
-.talkback-controls {
+/* Container for bottom talkback actions */
+.talkback-container {
   display: flex;
+  justify-content: center;
   gap: 12px;
-  margin-top: 20px;
-  padding: 0 16px;
+  margin-top: 24px;
+  padding-bottom: calc(16px + env(safe-area-inset-bottom)); /* Handles iPhone home bar */
 }
 
-.ptt-btn {
-  flex: 1;
+/* Intercom button styling */
+.talkback-btn {
   display: flex;
   align-items: center;
-  justify-content: center;
   gap: 8px;
-  padding: 14px 10px;
-  background: #1e293b;
+  padding: 10px 16px;
+  background-color: #111a28;
+  border: 1px solid #233348;
+  border-radius: 20px;
   color: #e2e8f0;
-  border: 1px solid #334155;
-  border-radius: 10px;
-  font-weight: 600;
   font-size: 0.9rem;
+  font-weight: 500;
   cursor: pointer;
-  user-select: none;
-  -webkit-touch-callout: none;
-  transition: all 0.15s ease;
+  transition: background-color 0.15s ease;
 }
 
-/* Active state visual feedback when held */
-.ptt-btn:active, .ptt-btn.transmitting {
-  background: #059669;
-  border-color: #10b981;
-  color: #ffffff;
-  transform: scale(0.98);
-  box-shadow: 0 0 12px rgba(16, 185, 129, 0.4);
+.talkback-btn:active {
+  background-color: #1d2c40;
+  transform: scale(0.97);
 }
